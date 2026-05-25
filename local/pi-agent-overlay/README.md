@@ -44,15 +44,60 @@ node scripts/sync-pi-agent-overlay.mjs
 The script copies only the versioned overlay files into `~/.pi/agent`. It does
 not touch auth, sessions, or installed `node_modules`.
 
+`~/.pi/agent` is the live runtime directory. The fork is the source of truth,
+but Pi does not load files directly from the fork. Run the sync script after
+changing overlay files or after merging upstream changes.
+
 ## Upstream Update Flow
 
+Use the guarded update script for the normal workflow:
+
 ```bash
-git fetch upstream
-git merge upstream/main
-node --experimental-strip-types local/pi-agent-overlay/extensions/hermes-brain-provider.test.mjs
-node --experimental-strip-types --check local/pi-agent-overlay/extensions/hermes-brain-provider/index.ts
-node scripts/sync-pi-agent-overlay.mjs
+node scripts/sync-pi-upstream.mjs
 ```
 
-If upstream changes conflict with this overlay, resolve the overlay files in
-this directory first, then sync.
+The script requires a clean worktree and then runs:
+
+1. `git fetch upstream`
+2. `git merge --ff-only upstream/main`
+3. a privacy scan for local paths, project markers, personal email fragments,
+   token-like strings, and key blocks in the overlay files
+4. `npm run check`
+5. overlay approval-policy tests
+6. TypeScript and script syntax checks
+7. `node scripts/sync-pi-agent-overlay.mjs`
+
+It does not push by default. Review the result, then run:
+
+```bash
+git push origin main
+```
+
+To push as part of the guarded workflow:
+
+```bash
+node scripts/sync-pi-upstream.mjs --push
+```
+
+If upstream changes conflict with this fork, the fast-forward merge fails.
+Resolve the upstream merge manually, rerun the guarded script, then push.
+
+For local-only project names or codewords, extend the privacy scan without
+committing those markers:
+
+```bash
+PI_OVERLAY_PRIVATE_PATTERNS='ProjectInternal|internal-codeword' node scripts/sync-pi-upstream.mjs
+```
+
+## Privacy Rules
+
+Do not commit live-only or personal files:
+
+- `~/.pi/agent/auth.json`
+- `~/.pi/agent/AGENTS.md`
+- `~/.pi/agent/sessions/`
+- `~/.pi/agent/npm/node_modules/`
+
+Keep examples generic. Do not use local absolute paths, private project names,
+real credentials, personal email addresses, or copied session data in this
+overlay.
