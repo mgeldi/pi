@@ -1,0 +1,29 @@
+{
+  "lastChangelogVersion": "0.75.5",
+  "defaultProvider": "hermes-brain",
+  "defaultModel": "hermes-brain",
+  "defaultThinkingLevel": "high",
+  "hideThinkingBlock": false,
+  "enableInstallTelemetry": false,
+  "compaction": {
+    "enabled": true,
+    "reserveTokens": 32768,
+    "keepRecentTokens": 30000
+  },
+  "retry": {
+    "enabled": true,
+    "maxRetries": 1,
+    "baseDelayMs": 1000,
+    "provider": {
+      "timeoutMs": 1800000,
+      "maxRetries": 0,
+      "maxRetryDelayMs": 10000
+    }
+  },
+  "extensions": [
+    "extensions/hermes-brain-provider/index.ts"
+  ],
+  "packages": [
+    "npm:@juicesharp/rpiv-todo"
+  ]
+}
