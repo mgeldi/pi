@@ -67,6 +67,120 @@ test("allows safe agent meta tools", async () => {
 	}
 });
 
+test("allows context-mode read-only query tools", async () => {
+	for (const toolName of [
+		"ctx_search",
+		"ctx_stats",
+		"ctx_doctor",
+		"mcp__plugin_context-mode_context-mode__ctx_search",
+	]) {
+		const decision = await classifyToolPreflight(
+			{
+				toolName,
+				input: { queries: ["prior decision"] },
+				cwd: "/workspace/project",
+			},
+			deps,
+		);
+
+		assert.equal(decision.action, "allow", toolName);
+		assert.equal(decision.reason, "context-mode read-only tool", toolName);
+	}
+});
+
+test("allows context-mode execute_file for in-project read-only analysis", async () => {
+	const decision = await classifyToolPreflight(
+		{
+			toolName: "ctx_execute_file",
+			input: {
+				path: "abst/upspf/dex/extserv/app.dex",
+				language: "javascript",
+				code: "const parsed = JSON.parse(FILE_CONTENT); console.log(`Total nodes: ${parsed.nodes?.length ?? 0}`);",
+			},
+			cwd: "/workspace/project",
+		},
+		deps,
+	);
+
+	assert.equal(decision.action, "allow");
+	assert.equal(decision.reason, "context-mode file analysis");
+	assert.equal(decision.mutation, undefined);
+});
+
+test("keeps context-mode execute_file outside the project behind human approval", async () => {
+	const decision = await classifyToolPreflight(
+		{
+			toolName: "ctx_execute_file",
+			input: {
+				path: "/private/outside/.ssh/id_ed25519",
+				language: "javascript",
+				code: "console.log(FILE_CONTENT.length);",
+			},
+			cwd: "/workspace/project",
+		},
+		deps,
+	);
+
+	assert.equal(decision.action, "ask");
+	assert.equal(decision.reason, "context-mode file analysis outside project requires human confirmation");
+});
+
+test("keeps context-mode execute_file with mutating code behind human approval", async () => {
+	const decision = await classifyToolPreflight(
+		{
+			toolName: "ctx_execute_file",
+			input: {
+				path: "src/data.json",
+				language: "javascript",
+				code: "require('fs').writeFileSync('out.txt', FILE_CONTENT);",
+			},
+			cwd: "/workspace/project",
+		},
+		deps,
+	);
+
+	assert.equal(decision.action, "ask");
+	assert.equal(decision.reason, "context-mode code may mutate files or external state");
+});
+
+test("allows context-mode shell execution when the command is read-only", async () => {
+	const decision = await classifyToolPreflight(
+		{
+			toolName: "ctx_execute",
+			input: {
+				language: "shell",
+				code: "find /workspace/project/abst -name 'UpDict*' -type f | head -10",
+			},
+			cwd: "/workspace/project",
+		},
+		deps,
+	);
+
+	assert.equal(decision.action, "allow");
+	assert.equal(decision.reason, "context-mode read-only shell execution");
+});
+
+test("keeps context-mode persistent and network tools behind approval", async () => {
+	for (const [toolName, expectedReason] of [
+		["ctx_fetch_and_index", "context-mode network fetch requires human confirmation"],
+		["ctx_index", "context-mode indexing writes local knowledge base"],
+		["ctx_upgrade", "context-mode upgrade requires human confirmation"],
+		["ctx_purge", "context-mode purge requires human confirmation"],
+	]) {
+		const decision = await classifyToolPreflight(
+			{
+				toolName,
+				input: { url: "https://example.test", confirm: true, content: "hello" },
+				cwd: "/workspace/project",
+			},
+			deps,
+		);
+
+		assert.equal(decision.action, "ask", toolName);
+		assert.equal(decision.reason, expectedReason, toolName);
+	}
+});
+
 test("allows read-only git binary object inspection", async () => {
 	const decision = await classifyToolPreflight(
 		{

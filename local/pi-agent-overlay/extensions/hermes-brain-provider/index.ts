@@ -143,6 +143,25 @@ const SAFE_AGENT_META_TOOL_NAMES = new Set([
 
 const CORE_MUTATING_TOOL_NAMES = new Set(["bash", "edit", "write"]);
 
+const CONTEXT_MODE_READ_ONLY_TOOL_NAMES = new Set([
+	"ctx_doctor",
+	"ctx_search",
+	"ctx_stats",
+]);
+
+const CONTEXT_MODE_PROTECTED_TOOL_REASONS = new Map([
+	["ctx_fetch_and_index", "context-mode network fetch requires human confirmation"],
+	["ctx_index", "context-mode indexing writes local knowledge base"],
+	["ctx_purge", "context-mode purge requires human confirmation"],
+	["ctx_upgrade", "context-mode upgrade requires human confirmation"],
+]);
+
+const CONTEXT_MODE_LEGACY_TOOL_ALIASES = new Map([
+	["batch_execute", "ctx_batch_execute"],
+	["execute", "ctx_execute"],
+	["execute_file", "ctx_execute_file"],
+]);
+
 function isRecord(value: unknown): value is JsonRecord {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -187,6 +206,17 @@ function isReadOnlyToolName(toolName: string): boolean {
 
 function normalizeToolName(toolName: string): string {
 	return toolName.toLowerCase().replace(/-/g, "_");
+}
+
+function contextModeToolName(toolName: string): string | undefined {
+	const normalized = normalizeToolName(toolName);
+	if (normalized.startsWith("ctx_")) return normalized;
+	if (!normalized.includes("context_mode")) return undefined;
+	const ctxIndex = normalized.lastIndexOf("__ctx_");
+	if (ctxIndex >= 0) return normalized.slice(ctxIndex + 2);
+	const suffix = normalized.split("__").at(-1);
+	if (!suffix) return undefined;
+	return CONTEXT_MODE_LEGACY_TOOL_ALIASES.get(suffix);
 }
 
 function isSafeAgentMetaToolName(toolName: string): boolean {
@@ -1139,6 +1169,138 @@ function approvalPrompt(toolName: string, reason: string, git: GitFileState | un
 	].join("\n");
 }
 
+function hasContextModeCodeRisk(language: string, code: string): boolean {
+	if (language.toLowerCase() === "shell") return false;
+	return [
+		/\bchild_process\b|\b(?:exec|execSync|execFile|execFileSync|spawn|spawnSync)\s*\(/i,
+		/\b(?:fetch\s*\(|XMLHttpRequest|https?\.request|requests\.|urllib\.|HttpClient\b|reqwest::|curl\b|wget\b)/i,
+		/\b(?:writeFile|writeFileSync|appendFile|appendFileSync|createWriteStream|unlink|unlinkSync|rm|rmSync|rmdir|rmdirSync|mkdir|mkdirSync|rename|renameSync|copyFile|copyFileSync|chmod|chmodSync|chown|chownSync)\s*\(/i,
+		/\b(?:Deno\.write|Deno\.remove|Deno\.mkdir|Bun\.write)\s*\(/i,
+		/\bopen\s*\([^,\n]+,\s*["'][^"']*[wax+][^"']*["']/i,
+		/\b(?:os\.system|os\.remove|os\.unlink|os\.rmdir|os\.mkdir|shutil\.(?:rmtree|copy|copyfile|move)|subprocess\.)/i,
+		/\b(?:File\.(?:write|delete|rename|open)|IO\.(?:write|binwrite)|FileUtils\.(?:rm|mkdir|cp|mv))/i,
+		/\b(?:os\.(?:WriteFile|Remove|RemoveAll|Mkdir|MkdirAll|Rename)|exec\.Command|http\.(?:Get|Post|NewRequest))/i,
+		/\b(?:std::fs::(?:write|remove_file|remove_dir|create_dir|rename)|Command::new|tokio::fs::(?:write|remove_file|create_dir)|ureq::|reqwest::)/i,
+		/\b(?:File\.(?:Write|WriteAllText|WriteAllBytes|AppendAllText|AppendAllBytes|Delete|Move|Copy|Create)|Directory\.(?:CreateDirectory|Delete|Move)|Process\.Start|new\s+HttpClient)\b/i,
+	].some((pattern) => pattern.test(code));
+}
+
+function classifyContextModeShellExecution(call: ToolPreflightInput, code: string): PreflightDecision {
+	if (isSkillsCliDiscovery(code)) return { action: "allow", reason: "context-mode skills CLI discovery command" };
+	if (isVerificationCommand(code)) return { action: "allow", reason: "context-mode verification command" };
+	if (isLocalLoopbackCurlCommand(code)) return { action: "allow", reason: "context-mode local loopback curl command" };
+	if (isObviouslyReadOnly(code)) return { action: "allow", reason: "context-mode read-only shell execution" };
+	if (hasNetworkOrExternalCommand(code)) {
+		return mutationDecision({
+			action: "ask",
+			reason: "network or external shell command requires human confirmation",
+			approvalPrompt: approvalPrompt(call.toolName, `context-mode shell=${code}`, undefined),
+		}, []);
+	}
+	if (isSkillsCliInstall(code)) {
+		return mutationDecision({
+			action: "ask",
+			reason: "skills CLI install requires human confirmation",
+			approvalPrompt: approvalPrompt(call.toolName, `context-mode shell=${code}`, undefined),
+		}, []);
+	}
+	if (isNpxPackageExecution(code)) {
+		return mutationDecision({
+			action: "ask",
+			reason: "npx package execution requires human confirmation",
+			approvalPrompt: approvalPrompt(call.toolName, `context-mode shell=${code}`, undefined),
+		}, []);
+	}
+	if (isPackageInstallationCommand(code)) {
+		return mutationDecision({
+			action: "ask",
+			reason: "package installation requires human confirmation",
+			approvalPrompt: approvalPrompt(call.toolName, `context-mode shell=${code}`, undefined),
+		}, []);
+	}
+	if (isHumanRiskBash(code)) {
+		return mutationDecision({
+			action: "ask",
+			reason: "high-impact shell command requires human confirmation",
+			approvalPrompt: approvalPrompt(call.toolName, `context-mode shell=${code}`, undefined),
+		}, []);
+	}
+	if (hasUnsafeShellControlSyntax(code)) {
+		return mutationDecision({
+			action: "sidecar",
+			reason: "context-mode shell control syntax requires approval sidecar",
+			approvalPrompt: approvalPrompt(call.toolName, `context-mode shell=${code}`, undefined),
+		}, []);
+	}
+	return mutationDecision({
+		action: "sidecar",
+		reason: "context-mode shell code requires approval sidecar",
+		approvalPrompt: approvalPrompt(call.toolName, `context-mode shell=${code}`, undefined),
+	}, []);
+}
+
+function classifyContextModeCodeExecution(call: ToolPreflightInput, successReason: string): PreflightDecision {
+	const language = typeof call.input.language === "string" ? call.input.language.toLowerCase() : undefined;
+	const code = typeof call.input.code === "string" ? call.input.code : undefined;
+	if (!language || code === undefined) return { action: "ask", reason: "malformed context-mode execution input" };
+	if (language === "shell") return classifyContextModeShellExecution(call, code);
+	if (hasContextModeCodeRisk(language, code)) {
+		return mutationDecision({
+			action: "ask",
+			reason: "context-mode code may mutate files or external state",
+			approvalPrompt: approvalPrompt(call.toolName, `context-mode ${language} code requires approval`, undefined),
+		}, []);
+	}
+	return { action: "allow", reason: successReason };
+}
+
+function classifyContextModeBatchExecution(call: ToolPreflightInput): PreflightDecision {
+	const commands = Array.isArray(call.input.commands) ? call.input.commands : undefined;
+	if (!commands) return { action: "ask", reason: "malformed context-mode batch input" };
+	for (const entry of commands) {
+		if (!isRecord(entry) || typeof entry.command !== "string") {
+			return { action: "ask", reason: "malformed context-mode batch input" };
+		}
+		const decision = classifyContextModeShellExecution(call, entry.command);
+		if (decision.action !== "allow") return decision;
+	}
+	return { action: "allow", reason: "context-mode read-only batch execution" };
+}
+
+function classifyContextModeToolPreflight(call: ToolPreflightInput): PreflightDecision | undefined {
+	const toolName = contextModeToolName(call.toolName);
+	if (!toolName) return undefined;
+	if (CONTEXT_MODE_READ_ONLY_TOOL_NAMES.has(toolName)) return { action: "allow", reason: "context-mode read-only tool" };
+	const protectedReason = CONTEXT_MODE_PROTECTED_TOOL_REASONS.get(toolName);
+	if (protectedReason) {
+		return mutationDecision({
+			action: "ask",
+			reason: protectedReason,
+			approvalPrompt: approvalPrompt(call.toolName, protectedReason, undefined),
+		}, []);
+	}
+	if (toolName === "ctx_execute") return classifyContextModeCodeExecution(call, "context-mode code execution");
+	if (toolName === "ctx_execute_file") {
+		const filePath = typeof call.input.path === "string" ? call.input.path : undefined;
+		if (!filePath) return { action: "ask", reason: "malformed context-mode execute_file input" };
+		const target = resolveTarget(call.cwd, filePath);
+		if (!isPathInsideRoot(target, call.cwd)) {
+			return {
+				action: "ask",
+				reason: "context-mode file analysis outside project requires human confirmation",
+				approvalPrompt: approvalPrompt(call.toolName, `context-mode path=${target}`, undefined),
+			};
+		}
+		return classifyContextModeCodeExecution(call, "context-mode file analysis");
+	}
+	if (toolName === "ctx_batch_execute") return classifyContextModeBatchExecution(call);
+	return mutationDecision({
+		action: "sidecar",
+		reason: `context-mode tool ${toolName} requires approval sidecar`,
+		approvalPrompt: approvalPrompt(call.toolName, `context-mode tool=${toolName}`, undefined),
+	}, []);
+}
+
 export async function classifyToolPreflight(
 	call: ToolPreflightInput,
 	deps: PolicyDeps,
@@ -1149,6 +1311,8 @@ export async function classifyToolPreflight(
 	if (isReadOnlyToolName(call.toolName)) {
 		return { action: "allow", reason: "read-only tool" };
 	}
+	const contextModeDecision = classifyContextModeToolPreflight(call);
+	if (contextModeDecision) return contextModeDecision;
 
 	if (call.toolName === "bash") {
 		const command = String(call.input.command ?? "");

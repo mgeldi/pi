@@ -26,6 +26,16 @@ Current package set:
 - `pi-subagents`
 - `pi-web-access`
 - `pi-lens`
+- `pi-verify`
+
+Verification model:
+
+- `pi-lens` stays the broad, language-aware post-write/edit feedback layer. It
+  uses LSP, linters, formatters, structural rules, and turn-end checks.
+- `pi-verify` adds the explicit `verify_code` tool for project-defined staged
+  checks such as builds, tests, and lint commands.
+- Avoid hard global build assumptions. Repositories with legacy toolchains or
+  nested projects should define `.pi/verify.json` locally.
 
 Excluded on purpose:
 
@@ -33,6 +43,24 @@ Excluded on purpose:
 - `AGENTS.md`
 - `sessions/`
 - `npm/node_modules/`
+
+## Approval Policy Notes
+
+The Hermes provider keeps Pi usable for local-only development while still
+guarding actions that are hard to reverse.
+
+- Normal read-only shell/file inspection is auto-approved, including local grep
+  checks over sensitive-looking names and git object inspection.
+- `context-mode` read/query tools (`ctx_search`, `ctx_stats`, `ctx_doctor`) are
+  auto-approved.
+- `ctx_execute_file` is auto-approved when it analyzes a path inside the current
+  project and the supplied code is read-only.
+- `ctx_execute` shell mode is auto-approved for commands that classify as
+  read-only, known verification commands, or local loopback curl calls.
+- `ctx_fetch_and_index`, `ctx_index`, `ctx_upgrade`, and `ctx_purge` still ask,
+  because they touch network, persistent local knowledge, upgrades, or deletion.
+- `ctx_execute_file` still asks outside the project or when the supplied code
+  appears to write files, spawn commands, or call external network APIs.
 
 ## Local LSP Toolchain
 
@@ -65,6 +93,11 @@ command -v pyright-langserver rust-analyzer java jdtls csharp-ls clangd \
   typescript-language-server bash-language-server yaml-language-server \
   vscode-json-language-server
 ```
+
+Optional user-level `pi-lens` preferences live in `~/.pi-lens/config.json`.
+The current local profile keeps formatting deferred, leaves automatic warning
+autofix disabled, and enables turn-end actionable warning reports with LSP code
+action names.
 
 ## Verify
 

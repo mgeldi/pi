@@ -29,6 +29,7 @@
     "npm:pi-subagents",
     "npm:pi-web-access",
     "npm:@juicesharp/rpiv-ask-user-question",
-    "npm:pi-lens"
+    "npm:pi-lens",
+    "npm:pi-verify"
   ]
 }
