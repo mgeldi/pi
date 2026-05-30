@@ -24,6 +24,11 @@
     "extensions/hermes-brain-provider/index.ts"
   ],
   "packages": [
-    "npm:@juicesharp/rpiv-todo"
+    "npm:@juicesharp/rpiv-todo",
+    "npm:context-mode",
+    "npm:pi-subagents",
+    "npm:pi-web-access",
+    "npm:@juicesharp/rpiv-ask-user-question",
+    "npm:pi-lens"
   ]
 }

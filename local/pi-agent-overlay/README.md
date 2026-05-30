@@ -15,7 +15,17 @@ core files. That keeps upstream merges simple: update the fork from
 - `extensions/hermes-brain-provider/`: local Hermes provider and approval policy.
 - `extensions/hermes-brain-provider.test.mjs`: regression tests for the approval policy.
 - `skills/todo-tool/SKILL.md`: local todo tool skill instructions.
-- `npm/package.json` and `npm/package-lock.json`: local Pi extension dependencies.
+- `npm/package.json` and `npm/package-lock.json`: pinned local Pi package
+  dependencies.
+
+Current package set:
+
+- `@juicesharp/rpiv-todo`
+- `@juicesharp/rpiv-ask-user-question`
+- `context-mode`
+- `pi-subagents`
+- `pi-web-access`
+- `pi-lens`
 
 Excluded on purpose:
 
@@ -24,6 +34,38 @@ Excluded on purpose:
 - `sessions/`
 - `npm/node_modules/`
 
+## Local LSP Toolchain
+
+`pi-lens` uses local language servers when it can find them, and falls back to
+its managed tool cache for npm-based servers. The live machine should have these
+servers available:
+
+- Python: `pyright-langserver`, managed under `~/.pi-lens/tools` with a
+  wrapper in `~/.local/bin`.
+- Rust: `rust-analyzer`, installed through `rustup component add rust-analyzer`.
+- Java: `jdtls`, installed under `~/.pi-lens/jdtls` with a wrapper in
+  `~/.local/bin/jdtls`.
+- JavaScript/TypeScript: `typescript-language-server` plus `typescript`,
+  managed under `~/.pi-lens/tools` with a wrapper in `~/.local/bin`.
+- C#: `csharp-ls`, installed under `~/.pi-lens/bin` with a wrapper in
+  `~/.local/bin`; the inner wrapper sets `DOTNET_ROOT=~/.dotnet` before
+  starting the real apphost.
+- C/C++: `clangd` from the system LLVM/Clang package.
+- Bash: `bash-language-server`, managed under `~/.pi-lens/tools` with a wrapper
+  in `~/.local/bin`.
+- YAML: `yaml-language-server`, managed under `~/.pi-lens/tools` with a wrapper
+  in `~/.local/bin`.
+- JSON: `vscode-json-language-server`, managed under `~/.pi-lens/tools` with a
+  wrapper in `~/.local/bin`.
+
+Quick shell check:
+
+```bash
+command -v pyright-langserver rust-analyzer java jdtls csharp-ls clangd \
+  typescript-language-server bash-language-server yaml-language-server \
+  vscode-json-language-server
+```
+
 ## Verify
 
 From the repository root:
@@ -31,7 +73,11 @@ From the repository root:
 ```bash
 node --experimental-strip-types local/pi-agent-overlay/extensions/hermes-brain-provider.test.mjs
 node --experimental-strip-types --check local/pi-agent-overlay/extensions/hermes-brain-provider/index.ts
+node scripts/context-mode-pi-bridge-smoke.test.mjs
 ```
+
+Run the `context-mode` smoke from a normal local shell. The Codex sandbox can
+block nested Node child-process stdio, which is the behavior that smoke checks.
 
 ## Sync To Live Pi
 
@@ -47,6 +93,12 @@ not touch auth, sessions, or installed `node_modules`.
 `~/.pi/agent` is the live runtime directory. The fork is the source of truth,
 but Pi does not load files directly from the fork. Run the sync script after
 changing overlay files or after merging upstream changes.
+
+After syncing, verify the live `context-mode` bridge from a normal local shell:
+
+```bash
+node scripts/context-mode-pi-bridge-smoke.test.mjs
+```
 
 ## Upstream Update Flow
 
@@ -66,6 +118,7 @@ The script requires a clean worktree and then runs:
 5. overlay approval-policy tests
 6. TypeScript and script syntax checks
 7. `node scripts/sync-pi-agent-overlay.mjs`
+8. `node scripts/context-mode-pi-bridge-smoke.test.mjs`
 
 It does not push by default. Review the result, then run:
 

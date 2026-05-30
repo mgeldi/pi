@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 
 export const privatePatternSource =
-	"(/home/[A-Za-z0-9._-]+|[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}|gho_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+|sk-[A-Za-z0-9_-]{8,}|BEGIN [A-Z ]*PRIVATE KEY)";
+	"(/home/[A-Za-z0-9._-]+|[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}|gho_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+|(^|[^A-Za-z0-9_-])sk-[A-Za-z0-9_-]{8,}|BEGIN [A-Z ]*PRIVATE KEY)";
 
 export function buildPrivatePatternSource(extraPatternSource = "") {
 	const trimmed = extraPatternSource.trim();
@@ -29,7 +29,15 @@ export function buildCommandPlan({ push, scanPatternSource = privatePatternSourc
 		{
 			label: "Scan overlay for local or private markers",
 			command: "rg",
-			args: ["-n", "-I", "-e", scanPatternSource, "local/pi-agent-overlay", "scripts/sync-pi-agent-overlay.mjs"],
+			args: [
+				"-n",
+				"-I",
+				"-e",
+				scanPatternSource,
+				"local/pi-agent-overlay",
+				"scripts/sync-pi-agent-overlay.mjs",
+				"scripts/context-mode-pi-bridge-smoke.test.mjs",
+			],
 			kind: "inverted",
 		},
 		{ label: "Run repository checks", command: "npm", args: ["run", "check"], kind: "normal" },
@@ -47,6 +55,7 @@ export function buildCommandPlan({ push, scanPatternSource = privatePatternSourc
 		},
 		{ label: "Check overlay sync script syntax", command: "node", args: ["--check", "scripts/sync-pi-agent-overlay.mjs"], kind: "normal" },
 		{ label: "Sync overlay to live Pi agent", command: "node", args: ["scripts/sync-pi-agent-overlay.mjs"], kind: "normal" },
+		{ label: "Run context-mode Pi bridge smoke test", command: "node", args: ["scripts/context-mode-pi-bridge-smoke.test.mjs"], kind: "normal" },
 	];
 	if (push) plan.push({ label: "Push updated fork", command: "git", args: ["push", "origin", "main"], kind: "normal" });
 	return plan;
