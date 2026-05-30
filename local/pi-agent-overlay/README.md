@@ -15,6 +15,7 @@ core files. That keeps upstream merges simple: update the fork from
 - `extensions/hermes-brain-provider/`: local Hermes provider and approval policy.
 - `extensions/hermes-brain-provider.test.mjs`: regression tests for the approval policy.
 - `skills/todo-tool/SKILL.md`: local todo tool skill instructions.
+- `themes/rnk-dark.json`: global custom Pi theme.
 - `npm/package.json` and `npm/package-lock.json`: pinned local Pi package
   dependencies.
 

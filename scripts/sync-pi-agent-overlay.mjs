@@ -18,6 +18,7 @@ const copies = [
 	["extensions/hermes-brain-provider/index.ts", "extensions/hermes-brain-provider/index.ts"],
 	["extensions/hermes-brain-provider.test.mjs", "extensions/hermes-brain-provider.test.mjs"],
 	["skills/todo-tool/SKILL.md", "skills/todo-tool/SKILL.md"],
+	["themes/rnk-dark.json", "themes/rnk-dark.json"],
 	["npm/package.json", "npm/package.json"],
 	["npm/package-lock.json", "npm/package-lock.json"],
 	["npm/.gitignore", "npm/.gitignore"],

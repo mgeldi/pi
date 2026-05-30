@@ -2,6 +2,7 @@
   "lastChangelogVersion": "0.78.0",
   "defaultProvider": "hermes-brain",
   "defaultModel": "hermes-brain",
+  "theme": "rnk-dark",
   "defaultThinkingLevel": "high",
   "hideThinkingBlock": false,
   "enableInstallTelemetry": false,
@@ -22,6 +23,9 @@
   },
   "extensions": [
     "extensions/hermes-brain-provider/index.ts"
+  ],
+  "themes": [
+    "themes/rnk-dark.json"
   ],
   "packages": [
     "npm:@juicesharp/rpiv-todo",
