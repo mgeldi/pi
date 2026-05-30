@@ -127,6 +127,34 @@ not touch auth, sessions, or installed `node_modules`.
 but Pi does not load files directly from the fork. Run the sync script after
 changing overlay files or after merging upstream changes.
 
+## Install Fork Core
+
+The `pi` executable should also point at this fork, not the published npm
+package, when local core changes matter.
+
+From the repository root:
+
+```bash
+npm run build
+node scripts/install-pi-fork-core.mjs
+```
+
+The script rewrites the active npm-global `pi` symlink to
+`packages/coding-agent/dist/cli.js` in this checkout. If a previous npm-global
+symlink exists, it is saved as `pi.upstream-npm` next to the active executable.
+
+Verify:
+
+```bash
+readlink -f "$(which pi)"
+pi --version
+```
+
+After this, do not use `pi update --self` for normal maintenance. Update the
+core by merging upstream into the fork, rebuilding, and rerunning the install
+script. Package updates remain separate and should be mirrored into
+`local/pi-agent-overlay/npm/package.json` and `package-lock.json`.
+
 After syncing, verify the live `context-mode` bridge from a normal local shell:
 
 ```bash

@@ -6,7 +6,7 @@
 		"@juicesharp/rpiv-todo": "1.16.1",
 		"context-mode": "1.0.151",
 		"pi-lens": "3.8.46",
-		"pi-subagents": "0.25.0",
+		"pi-subagents": "0.27.0",
 		"pi-verify": "0.1.1",
 		"pi-web-access": "0.10.7"
 	},

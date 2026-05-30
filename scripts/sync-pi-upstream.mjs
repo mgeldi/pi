@@ -36,6 +36,7 @@ export function buildCommandPlan({ push, scanPatternSource = privatePatternSourc
 				scanPatternSource,
 				"local/pi-agent-overlay",
 				"scripts/sync-pi-agent-overlay.mjs",
+				"scripts/install-pi-fork-core.mjs",
 				"scripts/context-mode-pi-bridge-smoke.test.mjs",
 			],
 			kind: "inverted",

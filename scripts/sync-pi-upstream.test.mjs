@@ -10,7 +10,7 @@ test("builds the safe upstream sync plan without pushing by default", () => {
 	assert.deepEqual(commands, [
 		"git fetch upstream",
 		"git merge --ff-only upstream/main",
-		"rg -n -I -e (/home/[A-Za-z0-9._-]+|[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}|gho_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+|(^|[^A-Za-z0-9_-])sk-[A-Za-z0-9_-]{8,}|BEGIN [A-Z ]*PRIVATE KEY) local/pi-agent-overlay scripts/sync-pi-agent-overlay.mjs scripts/context-mode-pi-bridge-smoke.test.mjs",
+		"rg -n -I -e (/home/[A-Za-z0-9._-]+|[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}|gho_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+|(^|[^A-Za-z0-9_-])sk-[A-Za-z0-9_-]{8,}|BEGIN [A-Z ]*PRIVATE KEY) local/pi-agent-overlay scripts/sync-pi-agent-overlay.mjs scripts/install-pi-fork-core.mjs scripts/context-mode-pi-bridge-smoke.test.mjs",
 		"npm run check",
 		"node --experimental-strip-types local/pi-agent-overlay/extensions/hermes-brain-provider.test.mjs",
 		"node --experimental-strip-types --check local/pi-agent-overlay/extensions/hermes-brain-provider/index.ts",
