@@ -44,6 +44,8 @@ const WORKFLOW_DECISION_TOOL = "workflow_decision";
 const SUBAGENT_TOOL_NAMES = new Set(["subagent", "mcp__pi-subagents__subagent"]);
 const TODO_TOOL_NAMES = new Set(["todo", "todos", "mcp__rpiv-todo__todo", "mcp__todo__todo"]);
 const REQUIRED_TODO_PHASES: WorkflowTodoPhase[] = ["investigate", "plan", "execute", "review", "verify"];
+const IMPLEMENTATION_SUBAGENT_NAMES = new Set(["worker", "delegate"]);
+const IMPLEMENTATION_CHAIN_NAMES = new Set(["implement-handoff"]);
 const EXECUTION_SKILLS = new Set([
 	"brainstorming",
 	"dispatching-parallel-agents",
@@ -65,6 +67,12 @@ const EXECUTION_SKILLS = new Set([
 	"using-git-worktrees",
 	"verification-before-completion",
 	"writing-plans",
+]);
+const SKILL_ONLY_SUBAGENT_NAMES = new Set([
+	...EXECUTION_SKILLS,
+	"using-superpowers",
+	"todo-tool",
+	"pi-subagents",
 ]);
 
 const READ_ONLY_BASH_PATTERNS = [
@@ -311,6 +319,50 @@ export function isSubagentExecution(call: ToolCallSummary): boolean {
 	return Boolean(call.input.agent || call.input.tasks || call.input.chain || call.input.chainName);
 }
 
+function collectSubagentNames(value: unknown, names: string[] = []): string[] {
+	if (typeof value !== "object" || value === null) return names;
+	if (Array.isArray(value)) {
+		for (const item of value) collectSubagentNames(item, names);
+		return names;
+	}
+
+	const record = value as JsonRecord;
+	if (typeof record.agent === "string" && record.agent.trim()) {
+		names.push(record.agent.trim());
+	}
+	collectSubagentNames(record.tasks, names);
+	collectSubagentNames(record.chain, names);
+	collectSubagentNames(record.parallel, names);
+	return names;
+}
+
+function hasImplementationSubagent(call: ToolCallSummary): boolean {
+	if (!isSubagentExecution(call)) return false;
+	if (typeof call.input.chainName === "string" && call.input.chainName.trim()) {
+		return IMPLEMENTATION_CHAIN_NAMES.has(call.input.chainName.trim());
+	}
+	return collectSubagentNames(call.input).some((name) => IMPLEMENTATION_SUBAGENT_NAMES.has(name));
+}
+
+export function isWorkflowSubagentExecution(call: ToolCallSummary): boolean {
+	return hasImplementationSubagent(call);
+}
+
+function evaluateSubagentExecutionGate(state: WorkflowGuardState, call: ToolCallSummary): MutationGateResult {
+	if (!isSubagentExecution(call) || !requiresSubstantialTodos(state)) return { block: false };
+
+	const skillNamesUsedAsAgents = collectSubagentNames(call.input).filter((name) => SKILL_ONLY_SUBAGENT_NAMES.has(name));
+	if (skillNamesUsedAsAgents.length === 0) return { block: false };
+
+	const nameList = [...new Set(skillNamesUsedAsAgents)].map((name) => `"${name}"`).join(", ");
+	return {
+		block: true,
+		reason:
+			`Workflow guard blocked subagent execution: ${nameList} is a skill name, not the implementation agent. ` +
+			`Use the "worker" subagent with a skill override instead, e.g. { agent: "worker", skill: [${nameList}], task: "...", async: true }.`,
+	};
+}
+
 function getTodoPhase(value: unknown): WorkflowTodoPhase | undefined {
 	if (typeof value !== "string") return undefined;
 	return REQUIRED_TODO_PHASES.includes(value as WorkflowTodoPhase) ? (value as WorkflowTodoPhase) : undefined;
@@ -425,7 +477,11 @@ export function evaluateToolCallGate(state: WorkflowGuardState, call: ToolCallSu
 	const todoCreateGate = evaluateTodoCreateGate(state, call);
 	if (todoCreateGate.block) return todoCreateGate;
 	if (TODO_TOOL_NAMES.has(call.toolName)) return { block: false };
-	if (isSubagentExecution(call)) return evaluateTodoGate(state);
+	if (isSubagentExecution(call)) {
+		const subagentGate = evaluateSubagentExecutionGate(state, call);
+		if (subagentGate.block) return subagentGate;
+		return evaluateTodoGate(state);
+	}
 	const todoGate = evaluateTodoGate(state);
 	if (todoGate.block && isMutatingToolCall(call)) return todoGate;
 	const executionGate = evaluateExecutionPhaseGate(state, call);
@@ -471,7 +527,7 @@ function buildWorkflowSystemPrompt(systemPrompt: string, prompt: string): string
 		"For substantial work, create described todo items with activeForm and metadata.phase for investigate, plan, execute, review, and verify before subagent execution or source mutations.",
 		"Before source mutations on substantial work, update the execute todo to in_progress.",
 		"Before git commit or push on substantial work, complete the review and verify todos.",
-		"For substantial work, run a subagent before the first mutation.",
+		"For substantial work, run an implementation subagent before the first mutation: use agent 'worker' or 'delegate'. Skills such as frontend-design belong in the subagent skill override, not in the agent field.",
 		"Use workflow_decision only to explicitly declare or adjust workflow mode before mutations.",
 		"Use direct mode only for small tasks or explicit direct/no-subagent user requests.",
 	].join("\n");
@@ -518,6 +574,7 @@ export default function workflowGuard(pi: ExtensionAPI) {
 			"For substantial work, the harness already preselects subagent mode unless the user explicitly requested direct/no-subagent execution.",
 			"Declare using-superpowers plus at least one execution skill; frontend-design is valid for frontend/artifact/game work.",
 			"Before subagent execution or source mutations, create todo items with metadata.phase: investigate, plan, execute, review, verify.",
+			"Use agent 'worker' with skill overrides for implementation, e.g. agent=worker and skill=[frontend-design]; do not use a skill name as the subagent agent.",
 			"Set the execute todo to in_progress before source mutations; complete review and verify todos before git commit or push.",
 		],
 		parameters: WorkflowDecisionParams,
@@ -575,7 +632,7 @@ export default function workflowGuard(pi: ExtensionAPI) {
 		} else if (!event.isError && isTodoCreateCall(call)) {
 			state.todoCreateCount += 1;
 		}
-		if (!event.isError && isSubagentExecution(call)) {
+		if (!event.isError && isWorkflowSubagentExecution(call)) {
 			state.subagentStarted = true;
 		}
 	});

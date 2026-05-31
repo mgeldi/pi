@@ -10,6 +10,7 @@ import {
 	isMutatingToolCall,
 	isSubagentExecution,
 	isTodoCreateCall,
+	isWorkflowSubagentExecution,
 	syncTodoStateFromDetails,
 	validateWorkflowDecision,
 } from "./workflow-guard/index.ts";
@@ -132,6 +133,42 @@ test("allows substantial subagent execution after required phase todos", () => {
 	addRequiredPhaseTodos(state);
 
 	const result = evaluateToolCallGate(state, { toolName: "subagent", input: { agent: "worker", task: "Implement it" } });
+
+	assert.equal(result.block, false);
+});
+
+test("blocks using a skill name as the substantial implementation subagent", () => {
+	const state = createWorkflowGuardStateForPrompt(
+		"Create a polished galactic colony browser game as a single HTML file in galactic-colony.html.",
+	);
+	addRequiredPhaseTodos(state);
+
+	const result = evaluateToolCallGate(state, {
+		toolName: "subagent",
+		input: { agent: "frontend-design", async: true },
+	});
+
+	assert.equal(result.block, true);
+	assert.match(result.reason, /frontend-design/);
+	assert.match(result.reason, /worker/);
+	assert.match(result.reason, /skill/);
+});
+
+test("allows worker implementation subagent with a frontend-design skill override", () => {
+	const state = createWorkflowGuardStateForPrompt(
+		"Create a polished galactic colony browser game as a single HTML file in galactic-colony.html.",
+	);
+	addRequiredPhaseTodos(state);
+
+	const result = evaluateToolCallGate(state, {
+		toolName: "subagent",
+		input: {
+			agent: "worker",
+			task: "Implement the requested polished single-file Galactic Colony browser game and report verification evidence.",
+			skill: ["frontend-design"],
+			async: true,
+		},
+	});
 
 	assert.equal(result.block, false);
 });
@@ -359,6 +396,23 @@ test("detects only real subagent execution calls", () => {
 	assert.equal(isSubagentExecution({ toolName: "subagent", input: { agent: "scout", task: "Map context" } }), true);
 	assert.equal(isSubagentExecution({ toolName: "subagent", input: { action: "list" } }), false);
 	assert.equal(isSubagentExecution({ toolName: "read", input: { path: "src/app.ts" } }), false);
+});
+
+test("counts only implementation subagents as satisfying the workflow handoff", () => {
+	assert.equal(
+		isWorkflowSubagentExecution({ toolName: "subagent", input: { agent: "worker", task: "Implement the approved plan." } }),
+		true,
+	);
+	assert.equal(
+		isWorkflowSubagentExecution({ toolName: "subagent", input: { agent: "scout", task: "Map context." } }),
+		false,
+	);
+	assert.equal(
+		isWorkflowSubagentExecution({ toolName: "subagent", input: { agent: "frontend-design", task: "Build UI." } }),
+		false,
+	);
+	assert.equal(isWorkflowSubagentExecution({ toolName: "subagent", input: { chainName: "investigate-plan" } }), false);
+	assert.equal(isWorkflowSubagentExecution({ toolName: "subagent", input: { chainName: "implement-handoff" } }), true);
 });
 
 test("finds skill locations in assembled system prompt", () => {

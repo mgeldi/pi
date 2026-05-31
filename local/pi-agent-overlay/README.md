@@ -71,6 +71,10 @@ Subagent workflow model:
 - Subagents are disposable focused sessions. Prefer them for scouting, context
   building, planning, research, review, validation, and larger implementation
   handoffs.
+- Implementation handoffs should use the `worker` subagent. Execution skills are
+  passed through the subagent `skill` override, for example `agent: "worker"`
+  with `skill: ["frontend-design"]`; skill names are not valid implementation
+  agent names.
 - Fresh-context defaults are set for `scout`, `researcher`, `context-builder`,
   `planner`, `reviewer`, and `delegate` to reduce parent context bloat.
 - `worker` and `oracle` stay forked by default because they often need the
