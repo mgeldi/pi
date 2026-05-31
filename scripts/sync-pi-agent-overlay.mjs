@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { cp, mkdir, rm } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const sourceRoot = join(repoRoot, "local", "pi-agent-overlay");
@@ -25,6 +25,7 @@ const copies = [
 	["npm/package.json", "npm/package.json"],
 	["npm/package-lock.json", "npm/package-lock.json"],
 	["npm/.gitignore", "npm/.gitignore"],
+	["npm/scripts", "npm/scripts"],
 ];
 
 for (const [from, to] of copies) {
@@ -34,6 +35,16 @@ for (const [from, to] of copies) {
 	await rm(target, { force: true, recursive: true });
 	await cp(source, target, { recursive: true });
 	console.log(`${from} -> ${target}`);
+}
+
+const patchScript = join(targetRoot, "npm", "scripts", "patch-pi-subagents.mjs");
+try {
+	const patchModule = await import(pathToFileURL(patchScript).href);
+	patchModule.patchPiSubagents();
+	console.log("Applied Pi overlay npm patches");
+} catch (error) {
+	console.error(`Failed to apply Pi overlay npm patches: ${error instanceof Error ? error.message : String(error)}`);
+	process.exitCode = 1;
 }
 
 console.log(`Synced Pi agent overlay to ${targetRoot}`);
