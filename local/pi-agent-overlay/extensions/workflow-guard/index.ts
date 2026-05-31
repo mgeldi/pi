@@ -24,6 +24,7 @@ export type WorkflowGuardState = {
 	classification: WorkflowPromptClassification;
 	decision?: WorkflowDecision;
 	subagentStarted: boolean;
+	todoCreateCount: number;
 };
 
 export type ToolCallSummary = {
@@ -38,6 +39,8 @@ export type MutationGateResult = {
 
 const WORKFLOW_DECISION_TOOL = "workflow_decision";
 const SUBAGENT_TOOL_NAMES = new Set(["subagent", "mcp__pi-subagents__subagent"]);
+const TODO_TOOL_NAMES = new Set(["todo", "todos", "mcp__rpiv-todo__todo", "mcp__todo__todo"]);
+const MIN_SUBSTANTIAL_TODOS = 3;
 const EXECUTION_SKILLS = new Set([
 	"brainstorming",
 	"dispatching-parallel-agents",
@@ -179,6 +182,7 @@ export function createWorkflowGuardStateForPrompt(prompt: string): WorkflowGuard
 		classification,
 		decision,
 		subagentStarted: false,
+		todoCreateCount: 0,
 	};
 }
 
@@ -268,6 +272,35 @@ export function isSubagentExecution(call: ToolCallSummary): boolean {
 	return Boolean(call.input.agent || call.input.tasks || call.input.chain || call.input.chainName);
 }
 
+export function isTodoCreateCall(call: ToolCallSummary): boolean {
+	if (!TODO_TOOL_NAMES.has(call.toolName)) return false;
+	if (call.input.action !== "create") return false;
+	return typeof call.input.subject === "string" && call.input.subject.trim().length > 0 && typeof call.input.description === "string" && call.input.description.trim().length > 0;
+}
+
+function requiresSubstantialTodos(state: WorkflowGuardState): boolean {
+	return state.classification.taskSize === "substantial" && !state.classification.explicitDirect;
+}
+
+function evaluateTodoGate(state: WorkflowGuardState): MutationGateResult {
+	if (!requiresSubstantialTodos(state)) return { block: false };
+	if (state.todoCreateCount >= MIN_SUBSTANTIAL_TODOS) return { block: false };
+	return {
+		block: true,
+		reason:
+			"Workflow guard blocked action: create at least 3 described todo items before subagent execution or source mutations on substantial work.",
+	};
+}
+
+export function evaluateToolCallGate(state: WorkflowGuardState, call: ToolCallSummary): MutationGateResult {
+	if (call.toolName === WORKFLOW_DECISION_TOOL) return { block: false };
+	if (TODO_TOOL_NAMES.has(call.toolName)) return { block: false };
+	if (isSubagentExecution(call)) return evaluateTodoGate(state);
+	const todoGate = evaluateTodoGate(state);
+	if (todoGate.block && isMutatingToolCall(call)) return todoGate;
+	return evaluateMutationGate(state, call);
+}
+
 export function findSkillLocation(systemPrompt: string, skillName: string): string | undefined {
 	const escaped = skillName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 	const pattern = new RegExp(`<name>\\s*${escaped}\\s*<\\/name>[\\s\\S]*?<location>([^<]+)<\\/location>`, "i");
@@ -296,10 +329,12 @@ function buildSkillBlock(systemPrompt: string, skillName: string): string | unde
 function buildWorkflowSystemPrompt(systemPrompt: string, prompt: string): string {
 	if (startsWithSlashCommand(prompt)) return systemPrompt;
 	const usingSuperpowers = buildSkillBlock(systemPrompt, "using-superpowers");
+	const todoTool = buildSkillBlock(systemPrompt, "todo-tool");
 	const guardInstructions = [
 		"Workflow guard is active.",
 		"For small/direct tasks, proceed directly; workflow_decision is optional.",
 		"For substantial work, the harness preselects subagent mode unless the user explicitly asked for direct/no-subagent execution.",
+		"For substantial work, create at least 3 todo items with concrete descriptions before subagent execution or source mutations.",
 		"For substantial work, run a subagent before the first mutation.",
 		"Use workflow_decision only to explicitly declare or adjust workflow mode before mutations.",
 		"Use direct mode only for small tasks or explicit direct/no-subagent user requests.",
@@ -310,6 +345,7 @@ function buildWorkflowSystemPrompt(systemPrompt: string, prompt: string): string
 		"<workflow_guard>",
 		guardInstructions,
 		usingSuperpowers ? `\n${usingSuperpowers}` : "",
+		todoTool ? `\n${todoTool}` : "",
 		"</workflow_guard>",
 	].join("\n");
 }
@@ -332,6 +368,7 @@ export default function workflowGuard(pi: ExtensionAPI) {
 	const state: WorkflowGuardState = {
 		classification: classifyPromptForWorkflow(""),
 		subagentStarted: false,
+		todoCreateCount: 0,
 	};
 
 	pi.registerTool({
@@ -373,20 +410,22 @@ export default function workflowGuard(pi: ExtensionAPI) {
 		state.classification = nextState.classification;
 		state.decision = nextState.decision;
 		state.subagentStarted = nextState.subagentStarted;
+		state.todoCreateCount = nextState.todoCreateCount;
 		return { systemPrompt: buildWorkflowSystemPrompt(event.systemPrompt, event.prompt) };
 	});
 
 	pi.on("tool_call", (event) => {
 		const call = { toolName: event.toolName, input: event.input as JsonRecord };
-		if (event.toolName === WORKFLOW_DECISION_TOOL) return;
-		if (isSubagentExecution(call)) return;
-		const gate = evaluateMutationGate(state, call);
+		const gate = evaluateToolCallGate(state, call);
 		if (!gate.block) return;
 		return { block: true, reason: gate.reason };
 	});
 
 	pi.on("tool_result", (event) => {
 		const call = { toolName: event.toolName, input: event.input as JsonRecord };
+		if (!event.isError && isTodoCreateCall(call)) {
+			state.todoCreateCount += 1;
+		}
 		if (!event.isError && isSubagentExecution(call)) {
 			state.subagentStarted = true;
 		}

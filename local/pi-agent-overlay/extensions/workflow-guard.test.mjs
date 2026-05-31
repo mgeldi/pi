@@ -5,9 +5,11 @@ import {
 	classifyPromptForWorkflow,
 	createWorkflowGuardStateForPrompt,
 	evaluateMutationGate,
+	evaluateToolCallGate,
 	findSkillLocation,
 	isMutatingToolCall,
 	isSubagentExecution,
+	isTodoCreateCall,
 	validateWorkflowDecision,
 } from "./workflow-guard/index.ts";
 
@@ -77,6 +79,36 @@ test("preselects subagent workflow for substantial prompts", () => {
 
 	assert.equal(result.block, true);
 	assert.match(result.reason, /Run a subagent/);
+});
+
+test("blocks substantial subagent execution until todos are created", () => {
+	const state = createWorkflowGuardStateForPrompt("Implement a new workflow extension with tests.");
+
+	const result = evaluateToolCallGate(state, { toolName: "subagent", input: { agent: "worker", task: "Implement it" } });
+
+	assert.equal(result.block, true);
+	assert.match(result.reason, /todo/i);
+});
+
+test("allows substantial subagent execution after three described todos", () => {
+	const state = createWorkflowGuardStateForPrompt("Implement a new workflow extension with tests.");
+	state.todoCreateCount = 3;
+
+	const result = evaluateToolCallGate(state, { toolName: "subagent", input: { agent: "worker", task: "Implement it" } });
+
+	assert.equal(result.block, false);
+});
+
+test("only counts todo creates with descriptions", () => {
+	assert.equal(
+		isTodoCreateCall({
+			toolName: "todo",
+			input: { action: "create", subject: "Investigate", description: "Read the relevant files and identify the failure mode." },
+		}),
+		true,
+	);
+	assert.equal(isTodoCreateCall({ toolName: "todo", input: { action: "create", subject: "Investigate" } }), false);
+	assert.equal(isTodoCreateCall({ toolName: "todo", input: { action: "list" } }), false);
 });
 
 test("treats append as a source mutation", () => {

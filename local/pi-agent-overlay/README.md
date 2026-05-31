@@ -14,9 +14,9 @@ core files. That keeps upstream merges simple: update the fork from
 - `models.json`: Hermes Brain and Hermes Approval provider definitions.
 - `extensions/hermes-brain-provider/`: local Hermes provider and approval policy.
 - `extensions/hermes-brain-provider.test.mjs`: regression tests for the approval policy.
-- `extensions/workflow-guard/`: local workflow gate that injects the
-  `using-superpowers` skill and blocks mutations until the agent declares a
-  direct/subagent workflow decision.
+- `extensions/workflow-guard/`: local workflow gate that injects workflow
+  instructions, preselects subagent mode for substantial work, requires described
+  todos before substantial execution, and blocks premature mutations.
 - `extensions/workflow-guard.test.mjs`: regression tests for workflow gating.
 - `chains/`: saved `pi-subagents` workflows copied into `~/.pi/agent/chains`.
 - `skills/todo-tool/SKILL.md`: local todo tool skill instructions.
@@ -47,15 +47,17 @@ Subagent workflow model:
 
 - The main Pi session is the persistent supervisor. It owns user communication,
   decisions, accepted scope, final synthesis, and completion claims.
-- `workflow-guard` adds a structural gate for substantial work: before `edit`,
-  `write`, `append`, or obvious mutating bash commands, the agent must call
-  `workflow_decision`.
-- Explicit single-file artifact tasks, such as a standalone HTML game, are
-  treated as small/direct so the agent does not spend a full generation on a
-  write that is then blocked.
-- For substantial tasks, `workflow_decision` must select `subagent`, declare
-  `using-superpowers` plus an execution skill such as
-  `subagent-driven-development`, and run a subagent before the first mutation.
+- `workflow-guard` adds a structural gate for substantial work: the harness
+  preselects subagent mode, requires at least three described todo items, blocks
+  subagent execution until those todos exist, and blocks `edit`, `write`,
+  `append`, or obvious mutating bash commands until the workflow has advanced.
+- Explicit single-file artifact wording is treated as an artifact constraint,
+  not as an automatic small/direct escape hatch. Polished apps, games, websites,
+  dashboards, and interactive tools remain substantial even when delivered as
+  one file.
+- `workflow_decision` is still available to explicitly declare or adjust workflow
+  mode, but substantial default routing no longer depends on the model deciding
+  to call it.
 - Explicit user escape hatches such as `mach direkt`, `ohne subagents`, or
   `no subagents` allow direct mode.
 - Read-only inspection remains free: `read`, `grep`, `find`, `ls`, read-only
