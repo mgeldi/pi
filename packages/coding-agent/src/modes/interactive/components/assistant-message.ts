@@ -141,6 +141,18 @@ export class AssistantMessageComponent extends Container {
 				const errorMsg = message.errorMessage || "Unknown error";
 				this.contentContainer.addChild(new Spacer(1));
 				this.contentContainer.addChild(new Text(theme.fg("error", `Error: ${errorMsg}`), 1, 0));
+			} else if (message.stopReason === "length") {
+				this.contentContainer.addChild(new Spacer(1));
+				this.contentContainer.addChild(
+					new Text(
+						theme.fg(
+							"warning",
+							"Output stopped at the model length limit. Ask the agent to continue, or reduce the requested output/thinking budget.",
+						),
+						1,
+						0,
+					),
+				);
 			}
 		}
 	}

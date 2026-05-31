@@ -7,7 +7,10 @@ const OSC133_ZONE_START = "\x1b]133;A\x07";
 const OSC133_ZONE_END = "\x1b]133;B\x07";
 const OSC133_ZONE_FINAL = "\x1b]133;C\x07";
 
-function createAssistantMessage(content: AssistantMessage["content"]): AssistantMessage {
+function createAssistantMessage(
+	content: AssistantMessage["content"],
+	options: Partial<Pick<AssistantMessage, "stopReason" | "errorMessage">> = {},
+): AssistantMessage {
 	return {
 		role: "assistant",
 		content,
@@ -22,9 +25,14 @@ function createAssistantMessage(content: AssistantMessage["content"]): Assistant
 			totalTokens: 0,
 			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 		},
-		stopReason: "stop",
+		stopReason: options.stopReason ?? "stop",
+		errorMessage: options.errorMessage,
 		timestamp: Date.now(),
 	};
+}
+
+function stripAnsi(text: string): string {
+	return text.replace(/\x1b\[[0-9;]*m/g, "").replace(/\x1b\]133;[ABC]\x07/g, "");
 }
 
 describe("AssistantMessageComponent", () => {
@@ -53,5 +61,19 @@ describe("AssistantMessageComponent", () => {
 		expect(rendered.includes(OSC133_ZONE_START)).toBe(false);
 		expect(rendered.includes(OSC133_ZONE_END)).toBe(false);
 		expect(rendered.includes(OSC133_ZONE_FINAL)).toBe(false);
+	});
+
+	test("shows a visible warning when assistant output hits the length limit", () => {
+		initTheme("dark");
+
+		const component = new AssistantMessageComponent(
+			createAssistantMessage([{ type: "thinking", thinking: "Still reasoning about the implementation..." }], {
+				stopReason: "length",
+			}),
+		);
+		const rendered = stripAnsi(component.render(100).join("\n"));
+
+		expect(rendered).toContain("Output stopped at the model length limit.");
+		expect(rendered).toContain("Ask the agent to continue");
 	});
 });
