@@ -10,8 +10,32 @@ import {
 	isMutatingToolCall,
 	isSubagentExecution,
 	isTodoCreateCall,
+	syncTodoStateFromDetails,
 	validateWorkflowDecision,
 } from "./workflow-guard/index.ts";
+
+function phaseTodo(id, phase, status = "pending") {
+	return {
+		id,
+		subject: `${phase} task`,
+		description: `Concrete ${phase} work for this task.`,
+		activeForm: `${phase}ing task`,
+		status,
+		metadata: { phase },
+	};
+}
+
+function addRequiredPhaseTodos(state, statuses = {}) {
+	syncTodoStateFromDetails(state, {
+		tasks: [
+			phaseTodo(1, "investigate", statuses.investigate ?? "pending"),
+			phaseTodo(2, "plan", statuses.plan ?? "pending"),
+			phaseTodo(3, "execute", statuses.execute ?? "pending"),
+			phaseTodo(4, "review", statuses.review ?? "pending"),
+			phaseTodo(5, "verify", statuses.verify ?? "pending"),
+		],
+	});
+}
 
 test("classifies substantial implementation prompts", () => {
 	const result = classifyPromptForWorkflow("Implementiere bitte eine harness extension mit tests und sync in die live pi config.");
@@ -81,18 +105,19 @@ test("preselects subagent workflow for substantial prompts", () => {
 	assert.match(result.reason, /Run a subagent/);
 });
 
-test("blocks substantial subagent execution until todos are created", () => {
+test("blocks substantial subagent execution until required phase todos are created", () => {
 	const state = createWorkflowGuardStateForPrompt("Implement a new workflow extension with tests.");
 
 	const result = evaluateToolCallGate(state, { toolName: "subagent", input: { agent: "worker", task: "Implement it" } });
 
 	assert.equal(result.block, true);
-	assert.match(result.reason, /todo/i);
+	assert.match(result.reason, /investigate/);
+	assert.match(result.reason, /verify/);
 });
 
-test("allows substantial subagent execution after three described todos", () => {
+test("allows substantial subagent execution after required phase todos", () => {
 	const state = createWorkflowGuardStateForPrompt("Implement a new workflow extension with tests.");
-	state.todoCreateCount = 3;
+	addRequiredPhaseTodos(state);
 
 	const result = evaluateToolCallGate(state, { toolName: "subagent", input: { agent: "worker", task: "Implement it" } });
 
@@ -103,12 +128,73 @@ test("only counts todo creates with descriptions", () => {
 	assert.equal(
 		isTodoCreateCall({
 			toolName: "todo",
-			input: { action: "create", subject: "Investigate", description: "Read the relevant files and identify the failure mode." },
+			input: {
+				action: "create",
+				subject: "Investigate",
+				description: "Read the relevant files and identify the failure mode.",
+				activeForm: "investigating the failure mode",
+				metadata: { phase: "investigate" },
+			},
 		}),
 		true,
 	);
 	assert.equal(isTodoCreateCall({ toolName: "todo", input: { action: "create", subject: "Investigate" } }), false);
+	assert.equal(
+		isTodoCreateCall({
+			toolName: "todo",
+			input: {
+				action: "create",
+				subject: "Investigate",
+				description: "Read files.",
+				activeForm: "investigating files",
+			},
+		}),
+		false,
+	);
 	assert.equal(isTodoCreateCall({ toolName: "todo", input: { action: "list" } }), false);
+});
+
+test("blocks source mutations until execute todo is in progress", () => {
+	const state = createWorkflowGuardStateForPrompt("Implement a new workflow extension with tests.");
+	addRequiredPhaseTodos(state, { execute: "pending" });
+	state.subagentStarted = true;
+
+	const result = evaluateToolCallGate(state, { toolName: "edit", input: { path: "src/workflow.ts" } });
+
+	assert.equal(result.block, true);
+	assert.match(result.reason, /execute/i);
+	assert.match(result.reason, /in_progress/);
+});
+
+test("allows source mutations while execute todo is in progress", () => {
+	const state = createWorkflowGuardStateForPrompt("Implement a new workflow extension with tests.");
+	addRequiredPhaseTodos(state, { execute: "in_progress" });
+	state.subagentStarted = true;
+
+	const result = evaluateToolCallGate(state, { toolName: "edit", input: { path: "src/workflow.ts" } });
+
+	assert.equal(result.block, false);
+});
+
+test("blocks commits until review and verify todos are completed", () => {
+	const state = createWorkflowGuardStateForPrompt("Implement a new workflow extension with tests.");
+	addRequiredPhaseTodos(state, { execute: "completed", review: "completed", verify: "pending" });
+	state.subagentStarted = true;
+
+	const result = evaluateToolCallGate(state, { toolName: "bash", input: { command: "git commit -m test" } });
+
+	assert.equal(result.block, true);
+	assert.match(result.reason, /verify/i);
+});
+
+test("allows commits after review and verify todos are completed", () => {
+	const state = createWorkflowGuardStateForPrompt("Implement a new workflow extension with tests.");
+	addRequiredPhaseTodos(state, { execute: "completed", review: "completed", verify: "completed" });
+	state.subagentStarted = true;
+
+	const result = evaluateToolCallGate(state, { toolName: "bash", input: { command: "git commit -m test" } });
+
+	assert.equal(result.block, false);
 });
 
 test("treats append as a source mutation", () => {

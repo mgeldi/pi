@@ -48,9 +48,12 @@ Subagent workflow model:
 - The main Pi session is the persistent supervisor. It owns user communication,
   decisions, accepted scope, final synthesis, and completion claims.
 - `workflow-guard` adds a structural gate for substantial work: the harness
-  preselects subagent mode, requires at least three described todo items, blocks
-  subagent execution until those todos exist, and blocks `edit`, `write`,
-  `append`, or obvious mutating bash commands until the workflow has advanced.
+  preselects subagent mode, requires described phase todos for `investigate`,
+  `plan`, `execute`, `review`, and `verify`, blocks subagent execution until
+  those phase todos exist, and blocks `edit`, `write`, `append`, or obvious
+  source-mutating bash commands until the `execute` todo is `in_progress`.
+  It also blocks `git commit` and `git push` until `review` and `verify` are
+  completed.
 - Explicit single-file artifact wording is treated as an artifact constraint,
   not as an automatic small/direct escape hatch. Polished apps, games, websites,
   dashboards, and interactive tools remain substantial even when delivered as

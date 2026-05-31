@@ -6,6 +6,8 @@ type JsonRecord = Record<string, unknown>;
 
 export type WorkflowMode = "direct" | "subagent";
 export type WorkflowTaskSize = "small" | "substantial";
+export type WorkflowTodoPhase = "investigate" | "plan" | "execute" | "review" | "verify";
+export type WorkflowTodoStatus = "pending" | "in_progress" | "completed" | "deleted";
 
 export type WorkflowDecision = {
 	mode: WorkflowMode;
@@ -25,6 +27,7 @@ export type WorkflowGuardState = {
 	decision?: WorkflowDecision;
 	subagentStarted: boolean;
 	todoCreateCount: number;
+	todoPhases: Partial<Record<WorkflowTodoPhase, WorkflowTodoStatus>>;
 };
 
 export type ToolCallSummary = {
@@ -40,7 +43,7 @@ export type MutationGateResult = {
 const WORKFLOW_DECISION_TOOL = "workflow_decision";
 const SUBAGENT_TOOL_NAMES = new Set(["subagent", "mcp__pi-subagents__subagent"]);
 const TODO_TOOL_NAMES = new Set(["todo", "todos", "mcp__rpiv-todo__todo", "mcp__todo__todo"]);
-const MIN_SUBSTANTIAL_TODOS = 3;
+const REQUIRED_TODO_PHASES: WorkflowTodoPhase[] = ["investigate", "plan", "execute", "review", "verify"];
 const EXECUTION_SKILLS = new Set([
 	"brainstorming",
 	"dispatching-parallel-agents",
@@ -68,6 +71,17 @@ const MUTATING_BASH_PATTERNS = [
 	/(^|[;&|]\s*)(?:sed\s+-i|perl\s+-pi)\b/i,
 	/(^|[^2])>\s*(?!\/dev\/null\b)/,
 	/>>\s*(?!\/dev\/null\b)/,
+];
+
+const SOURCE_MUTATING_BASH_PATTERNS = [
+	/(^|[;&|]\s*)(?:tee)\b/i,
+	/(^|[;&|]\s*)(?:sed\s+-i|perl\s+-pi)\b/i,
+	/(^|[^2])>\s*(?!\/dev\/null\b)/,
+	/>>\s*(?!\/dev\/null\b)/,
+];
+
+const COMMIT_BASH_PATTERNS = [
+	/(^|[;&|]\s*)git\s+(?:commit|push)\b/i,
 ];
 
 const WorkflowDecisionParams = {
@@ -183,6 +197,7 @@ export function createWorkflowGuardStateForPrompt(prompt: string): WorkflowGuard
 		decision,
 		subagentStarted: false,
 		todoCreateCount: 0,
+		todoPhases: {},
 	};
 }
 
@@ -198,6 +213,19 @@ export function isMutatingToolCall(call: ToolCallSummary): boolean {
 	if (call.toolName !== "bash") return false;
 	const command = typeof call.input.command === "string" ? call.input.command : "";
 	return !isReadOnlyBash(command) && MUTATING_BASH_PATTERNS.some((pattern) => pattern.test(command));
+}
+
+function isSourceMutationCall(call: ToolCallSummary): boolean {
+	if (call.toolName === "edit" || call.toolName === "write" || call.toolName === "append") return true;
+	if (call.toolName !== "bash") return false;
+	const command = typeof call.input.command === "string" ? call.input.command : "";
+	return SOURCE_MUTATING_BASH_PATTERNS.some((pattern) => pattern.test(command));
+}
+
+function isCommitCall(call: ToolCallSummary): boolean {
+	if (call.toolName !== "bash") return false;
+	const command = typeof call.input.command === "string" ? call.input.command : "";
+	return COMMIT_BASH_PATTERNS.some((pattern) => pattern.test(command));
 }
 
 function hasExecutionSkill(skills: string[]): boolean {
@@ -272,23 +300,100 @@ export function isSubagentExecution(call: ToolCallSummary): boolean {
 	return Boolean(call.input.agent || call.input.tasks || call.input.chain || call.input.chainName);
 }
 
+function getTodoPhase(value: unknown): WorkflowTodoPhase | undefined {
+	if (typeof value !== "string") return undefined;
+	return REQUIRED_TODO_PHASES.includes(value as WorkflowTodoPhase) ? (value as WorkflowTodoPhase) : undefined;
+}
+
+function getMetadataPhase(metadata: unknown): WorkflowTodoPhase | undefined {
+	if (typeof metadata !== "object" || metadata === null || Array.isArray(metadata)) return undefined;
+	return getTodoPhase((metadata as JsonRecord).phase);
+}
+
 export function isTodoCreateCall(call: ToolCallSummary): boolean {
 	if (!TODO_TOOL_NAMES.has(call.toolName)) return false;
 	if (call.input.action !== "create") return false;
-	return typeof call.input.subject === "string" && call.input.subject.trim().length > 0 && typeof call.input.description === "string" && call.input.description.trim().length > 0;
+	return (
+		typeof call.input.subject === "string" &&
+		call.input.subject.trim().length > 0 &&
+		typeof call.input.description === "string" &&
+		call.input.description.trim().length >= 20 &&
+		typeof call.input.activeForm === "string" &&
+		call.input.activeForm.trim().length > 0 &&
+		getMetadataPhase(call.input.metadata) !== undefined
+	);
+}
+
+type TodoTaskSnapshot = {
+	status?: unknown;
+	metadata?: unknown;
+	description?: unknown;
+	activeForm?: unknown;
+};
+
+function isValidPhaseTodo(task: TodoTaskSnapshot): task is TodoTaskSnapshot & { status: WorkflowTodoStatus } {
+	const phase = getMetadataPhase(task.metadata);
+	if (!phase) return false;
+	if (!["pending", "in_progress", "completed", "deleted"].includes(String(task.status))) return false;
+	if (typeof task.description !== "string" || task.description.trim().length < 20) return false;
+	if (typeof task.activeForm !== "string" || task.activeForm.trim().length === 0) return false;
+	return true;
+}
+
+export function syncTodoStateFromDetails(state: WorkflowGuardState, details: unknown): void {
+	if (typeof details !== "object" || details === null || Array.isArray(details)) return;
+	const tasks = (details as JsonRecord).tasks;
+	if (!Array.isArray(tasks)) return;
+
+	const phases: Partial<Record<WorkflowTodoPhase, WorkflowTodoStatus>> = {};
+	let count = 0;
+	for (const task of tasks) {
+		if (typeof task !== "object" || task === null || Array.isArray(task)) continue;
+		const candidate = task as TodoTaskSnapshot;
+		if (!isValidPhaseTodo(candidate)) continue;
+		const phase = getMetadataPhase(candidate.metadata);
+		if (!phase || candidate.status === "deleted") continue;
+		count += 1;
+		phases[phase] = candidate.status;
+	}
+	state.todoCreateCount = count;
+	state.todoPhases = phases;
 }
 
 function requiresSubstantialTodos(state: WorkflowGuardState): boolean {
 	return state.classification.taskSize === "substantial" && !state.classification.explicitDirect;
 }
 
+function missingTodoPhases(state: WorkflowGuardState): WorkflowTodoPhase[] {
+	const phases = state.todoPhases ?? {};
+	return REQUIRED_TODO_PHASES.filter((phase) => !phases[phase]);
+}
+
 function evaluateTodoGate(state: WorkflowGuardState): MutationGateResult {
 	if (!requiresSubstantialTodos(state)) return { block: false };
-	if (state.todoCreateCount >= MIN_SUBSTANTIAL_TODOS) return { block: false };
+	const missing = missingTodoPhases(state);
+	if (missing.length === 0) return { block: false };
 	return {
 		block: true,
-		reason:
-			"Workflow guard blocked action: create at least 3 described todo items before subagent execution or source mutations on substantial work.",
+		reason: `Workflow guard blocked action: create described todo items with metadata.phase for: ${missing.join(", ")}.`,
+	};
+}
+
+function evaluateExecutionPhaseGate(state: WorkflowGuardState, call: ToolCallSummary): MutationGateResult {
+	if (!requiresSubstantialTodos(state) || !isSourceMutationCall(call)) return { block: false };
+	if (state.todoPhases?.execute === "in_progress") return { block: false };
+	return {
+		block: true,
+		reason: "Workflow guard blocked source mutation: set the execute todo to in_progress before editing files.",
+	};
+}
+
+function evaluateCompletionPhaseGate(state: WorkflowGuardState, call: ToolCallSummary): MutationGateResult {
+	if (!requiresSubstantialTodos(state) || !isCommitCall(call)) return { block: false };
+	if (state.todoPhases?.review === "completed" && state.todoPhases?.verify === "completed") return { block: false };
+	return {
+		block: true,
+		reason: "Workflow guard blocked commit/push: complete review and verify todos before committing or pushing.",
 	};
 }
 
@@ -298,6 +403,10 @@ export function evaluateToolCallGate(state: WorkflowGuardState, call: ToolCallSu
 	if (isSubagentExecution(call)) return evaluateTodoGate(state);
 	const todoGate = evaluateTodoGate(state);
 	if (todoGate.block && isMutatingToolCall(call)) return todoGate;
+	const executionGate = evaluateExecutionPhaseGate(state, call);
+	if (executionGate.block) return executionGate;
+	const completionGate = evaluateCompletionPhaseGate(state, call);
+	if (completionGate.block) return completionGate;
 	return evaluateMutationGate(state, call);
 }
 
@@ -334,7 +443,9 @@ function buildWorkflowSystemPrompt(systemPrompt: string, prompt: string): string
 		"Workflow guard is active.",
 		"For small/direct tasks, proceed directly; workflow_decision is optional.",
 		"For substantial work, the harness preselects subagent mode unless the user explicitly asked for direct/no-subagent execution.",
-		"For substantial work, create at least 3 todo items with concrete descriptions before subagent execution or source mutations.",
+		"For substantial work, create described todo items with activeForm and metadata.phase for investigate, plan, execute, review, and verify before subagent execution or source mutations.",
+		"Before source mutations on substantial work, update the execute todo to in_progress.",
+		"Before git commit or push on substantial work, complete the review and verify todos.",
 		"For substantial work, run a subagent before the first mutation.",
 		"Use workflow_decision only to explicitly declare or adjust workflow mode before mutations.",
 		"Use direct mode only for small tasks or explicit direct/no-subagent user requests.",
@@ -369,6 +480,7 @@ export default function workflowGuard(pi: ExtensionAPI) {
 		classification: classifyPromptForWorkflow(""),
 		subagentStarted: false,
 		todoCreateCount: 0,
+		todoPhases: {},
 	};
 
 	pi.registerTool({
@@ -378,8 +490,9 @@ export default function workflowGuard(pi: ExtensionAPI) {
 			"Declare the workflow before source mutations. Use subagent mode for substantial tasks unless the user explicitly requested direct/no-subagent execution.",
 		promptSnippet: "Declare direct vs subagent workflow before mutating files.",
 		promptGuidelines: [
-			"Call workflow_decision before edit/write/append or mutating bash for substantial work.",
-			"For substantial work, list using-superpowers and a relevant execution skill, then run a subagent before mutating files.",
+			"For substantial work, the harness already preselects subagent mode unless the user explicitly requested direct/no-subagent execution.",
+			"Before subagent execution or source mutations, create todo items with metadata.phase: investigate, plan, execute, review, verify.",
+			"Set the execute todo to in_progress before source mutations; complete review and verify todos before git commit or push.",
 		],
 		parameters: WorkflowDecisionParams,
 		async execute(_toolCallId, params) {
@@ -411,6 +524,7 @@ export default function workflowGuard(pi: ExtensionAPI) {
 		state.decision = nextState.decision;
 		state.subagentStarted = nextState.subagentStarted;
 		state.todoCreateCount = nextState.todoCreateCount;
+		state.todoPhases = nextState.todoPhases;
 		return { systemPrompt: buildWorkflowSystemPrompt(event.systemPrompt, event.prompt) };
 	});
 
@@ -423,7 +537,9 @@ export default function workflowGuard(pi: ExtensionAPI) {
 
 	pi.on("tool_result", (event) => {
 		const call = { toolName: event.toolName, input: event.input as JsonRecord };
-		if (!event.isError && isTodoCreateCall(call)) {
+		if (!event.isError && TODO_TOOL_NAMES.has(event.toolName)) {
+			syncTodoStateFromDetails(state, event.details);
+		} else if (!event.isError && isTodoCreateCall(call)) {
 			state.todoCreateCount += 1;
 		}
 		if (!event.isError && isSubagentExecution(call)) {
