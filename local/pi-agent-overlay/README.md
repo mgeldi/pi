@@ -23,6 +23,9 @@ core files. That keeps upstream merges simple: update the fork from
 - `themes/rnk-dark.json`: global custom Pi theme.
 - `npm/package.json` and `npm/package-lock.json`: pinned local Pi package
   dependencies.
+- `npm/scripts/patch-pi-subagents.mjs`: live package patch for `pi-subagents`
+  UI behavior, including live foreground timer refreshes and sync-worker token
+  counters sourced from child session usage.
 
 Current package set:
 

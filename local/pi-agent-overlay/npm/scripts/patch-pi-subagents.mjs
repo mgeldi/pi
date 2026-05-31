@@ -22,7 +22,74 @@ function patchFile(packageRoot, relativePath, patcher) {
 }
 
 function patchForegroundExecution(packageRoot) {
-	patchFile(packageRoot, "src/runs/foreground/execution.ts", (source) => replaceOnce(source, `\t\tif (controlConfig.enabled) {
+	patchFile(packageRoot, "src/runs/foreground/execution.ts", (source) => {
+		let next = source;
+		next = replaceOnce(next, `import {
+\tgetFinalOutput,
+\tfindLatestSessionFile,
+\tdetectSubagentError,
+\textractToolArgsPreview,
+\textractTextFromContent,
+} from "../../shared/utils.ts";
+`, `import {
+\tgetFinalOutput,
+\tfindLatestSessionFile,
+\tdetectSubagentError,
+\textractToolArgsPreview,
+\textractTextFromContent,
+} from "../../shared/utils.ts";
+import { parseSessionTokens } from "../../shared/session-tokens.ts";
+`, "foreground session token import");
+
+		next = replaceOnce(next, `function sumUsage(target: Usage, source: Usage): void {
+\ttarget.input += source.input;
+\ttarget.output += source.output;
+\ttarget.cacheRead += source.cacheRead;
+\ttarget.cacheWrite += source.cacheWrite;
+\ttarget.cost += source.cost;
+\ttarget.turns += source.turns;
+}
+`, `function sumUsage(target: Usage, source: Usage): void {
+\ttarget.input += source.input;
+\ttarget.output += source.output;
+\ttarget.cacheRead += source.cacheRead;
+\ttarget.cacheWrite += source.cacheWrite;
+\ttarget.cost += source.cost;
+\ttarget.turns += source.turns;
+}
+
+function updateProgressTokensFromSession(progress: AgentProgress, result: SingleResult, sessionDir: string | undefined): boolean {
+\tif (!sessionDir) return false;
+\tconst sessionTokens = parseSessionTokens(sessionDir);
+\tif (!sessionTokens || sessionTokens.total <= 0 || sessionTokens.total <= progress.tokens) return false;
+\tprogress.tokens = sessionTokens.total;
+\tresult.usage.input = Math.max(result.usage.input, sessionTokens.input);
+\tresult.usage.output = Math.max(result.usage.output, sessionTokens.output);
+\treturn true;
+}
+`, "foreground live session token helper");
+
+		next = replaceOnce(next, `\tresult.progress = progress;
+\tconst spawnEnv = { ...process.env, ...sharedEnv, ...getSubagentDepthEnv(options.maxSubagentDepth) };
+`, `\tresult.progress = progress;
+\tconst sessionTokenDir = options.sessionDir ?? (options.sessionFile ? path.dirname(options.sessionFile) : undefined);
+\tconst spawnEnv = { ...process.env, ...sharedEnv, ...getSubagentDepthEnv(options.maxSubagentDepth) };
+`, "foreground session token dir");
+
+		next = replaceOnce(next, `\t\tconst fireUpdate = () => {
+\t\t\tif (!options.onUpdate || processClosed) return;
+\t\t\tprogress.durationMs = Date.now() - startTime;
+\t\t\temitUpdateSnapshot(getFinalOutput(result.messages) || "(running...)");
+\t\t};
+`, `\t\tconst fireUpdate = () => {
+\t\t\tif (!options.onUpdate || processClosed) return;
+\t\t\tupdateProgressTokensFromSession(progress, result, sessionTokenDir);
+\t\t\tprogress.durationMs = Date.now() - startTime;
+\t\t\temitUpdateSnapshot(getFinalOutput(result.messages) || "(running...)");
+\t\t};
+`, "foreground live session token refresh");
+
+		next = replaceOnce(next, `\t\tif (controlConfig.enabled) {
 \t\t\tactivityTimer = setInterval(() => {
 \t\t\t\tif (processClosed || settled || detached) return;
 \t\t\t\tconst now = Date.now();
@@ -41,7 +108,9 @@ function patchForegroundExecution(packageRoot) {
 \t\t\tfireUpdate();
 \t\t}, 1000);
 \t\tactivityTimer.unref?.();
-`, "foreground live progress timer"));
+`, "foreground live progress timer");
+		return next;
+	});
 }
 
 function patchRender(packageRoot) {

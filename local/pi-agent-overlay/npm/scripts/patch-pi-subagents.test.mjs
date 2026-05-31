@@ -6,6 +6,40 @@ import test from "node:test";
 import { patchPiSubagents } from "./patch-pi-subagents.mjs";
 
 const foregroundOriginal = `
+import * as path from "node:path";
+import type {
+\tAgentProgress,
+\tRunSyncOptions,
+\tSingleResult,
+\tUsage,
+} from "../../shared/types.ts";
+import {
+\tgetFinalOutput,
+\tfindLatestSessionFile,
+\tdetectSubagentError,
+\textractToolArgsPreview,
+\textractTextFromContent,
+} from "../../shared/utils.ts";
+
+function sumUsage(target: Usage, source: Usage): void {
+\ttarget.input += source.input;
+\ttarget.output += source.output;
+\ttarget.cacheRead += source.cacheRead;
+\ttarget.cacheWrite += source.cacheWrite;
+\ttarget.cost += source.cost;
+\ttarget.turns += source.turns;
+}
+
+function run(progress: AgentProgress, result: SingleResult, options: RunSyncOptions) {
+\tresult.progress = progress;
+\tconst spawnEnv = { ...process.env, ...sharedEnv, ...getSubagentDepthEnv(options.maxSubagentDepth) };
+
+\t\tconst fireUpdate = () => {
+\t\t\tif (!options.onUpdate || processClosed) return;
+\t\t\tprogress.durationMs = Date.now() - startTime;
+\t\t\temitUpdateSnapshot(getFinalOutput(result.messages) || "(running...)");
+\t\t};
+
 \t\tif (controlConfig.enabled) {
 \t\t\tactivityTimer = setInterval(() => {
 \t\t\t\tif (processClosed || settled || detached) return;
@@ -17,6 +51,7 @@ const foregroundOriginal = `
 \t\t\t}, 1000);
 \t\t\tactivityTimer.unref?.();
 \t\t}
+}
 `;
 
 const renderOriginal = `
@@ -104,6 +139,9 @@ test("patches pi-subagents live timers and remains idempotent", async () => {
 	const execution = await readFile(path.join(packageRoot, "src", "runs", "foreground", "execution.ts"), "utf8");
 	assert.match(execution, /fireUpdate\(\);/);
 	assert.match(execution, /if \(controlConfig\.enabled\) updateActivityState\(now\);/);
+	assert.match(execution, /parseSessionTokens/);
+	assert.match(execution, /updateProgressTokensFromSession/);
+	assert.match(execution, /sessionTokenDir/);
 	assert.doesNotMatch(execution, /if \(updateActivityState\(now\)\) \{/);
 
 	const render = await readFile(path.join(packageRoot, "src", "tui", "render.ts"), "utf8");
