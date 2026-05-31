@@ -26,6 +26,7 @@ export type WorkflowGuardState = {
 	classification: WorkflowPromptClassification;
 	decision?: WorkflowDecision;
 	subagentStarted: boolean;
+	blockImmediateAsyncSubagentStatus?: boolean;
 	todoCreateCount: number;
 	todoPhases: Partial<Record<WorkflowTodoPhase, WorkflowTodoStatus>>;
 };
@@ -215,6 +216,7 @@ export function createWorkflowGuardStateForPrompt(prompt: string): WorkflowGuard
 		classification,
 		decision,
 		subagentStarted: false,
+		blockImmediateAsyncSubagentStatus: false,
 		todoCreateCount: 0,
 		todoPhases: {},
 	};
@@ -319,6 +321,10 @@ export function isSubagentExecution(call: ToolCallSummary): boolean {
 	return Boolean(call.input.agent || call.input.tasks || call.input.chain || call.input.chainName);
 }
 
+function isSubagentStatusCall(call: ToolCallSummary): boolean {
+	return SUBAGENT_TOOL_NAMES.has(call.toolName) && call.input.action === "status";
+}
+
 function collectSubagentNames(value: unknown, names: string[] = []): string[] {
 	if (typeof value !== "object" || value === null) return names;
 	if (Array.isArray(value)) {
@@ -360,6 +366,15 @@ function evaluateSubagentExecutionGate(state: WorkflowGuardState, call: ToolCall
 		reason:
 			`Workflow guard blocked subagent execution: ${nameList} is a skill name, not the implementation agent. ` +
 			`Use the "worker" subagent with a skill override instead, e.g. { agent: "worker", skill: [${nameList}], task: "...", async: true }.`,
+	};
+}
+
+function evaluateSubagentStatusGate(state: WorkflowGuardState, call: ToolCallSummary): MutationGateResult {
+	if (!state.blockImmediateAsyncSubagentStatus || !isSubagentStatusCall(call)) return { block: false };
+	return {
+		block: true,
+		reason:
+			"Workflow guard blocked immediate async subagent polling: the async run is already visible in the tracking overlay. Continue independent parent work, stop and wait for the user, or inspect status later when there is a concrete reason.",
 	};
 }
 
@@ -474,6 +489,8 @@ function evaluateCompletionPhaseGate(state: WorkflowGuardState, call: ToolCallSu
 
 export function evaluateToolCallGate(state: WorkflowGuardState, call: ToolCallSummary): MutationGateResult {
 	if (call.toolName === WORKFLOW_DECISION_TOOL) return { block: false };
+	const subagentStatusGate = evaluateSubagentStatusGate(state, call);
+	if (subagentStatusGate.block) return subagentStatusGate;
 	const todoCreateGate = evaluateTodoCreateGate(state, call);
 	if (todoCreateGate.block) return todoCreateGate;
 	if (TODO_TOOL_NAMES.has(call.toolName)) return { block: false };
@@ -560,6 +577,7 @@ export default function workflowGuard(pi: ExtensionAPI) {
 	const state: WorkflowGuardState = {
 		classification: classifyPromptForWorkflow(""),
 		subagentStarted: false,
+		blockImmediateAsyncSubagentStatus: false,
 		todoCreateCount: 0,
 		todoPhases: {},
 	};
@@ -606,6 +624,7 @@ export default function workflowGuard(pi: ExtensionAPI) {
 		state.classification = nextState.classification;
 		state.decision = nextState.decision;
 		state.subagentStarted = nextState.subagentStarted;
+		state.blockImmediateAsyncSubagentStatus = nextState.blockImmediateAsyncSubagentStatus;
 		state.todoCreateCount = nextState.todoCreateCount;
 		state.todoPhases = nextState.todoPhases;
 		return { systemPrompt: buildWorkflowSystemPrompt(event.systemPrompt, event.prompt) };
@@ -634,6 +653,9 @@ export default function workflowGuard(pi: ExtensionAPI) {
 		}
 		if (!event.isError && isWorkflowSubagentExecution(call)) {
 			state.subagentStarted = true;
+			state.blockImmediateAsyncSubagentStatus = call.input.async === true;
+		} else if (!event.isError && state.blockImmediateAsyncSubagentStatus && !isSubagentStatusCall(call)) {
+			state.blockImmediateAsyncSubagentStatus = false;
 		}
 	});
 }

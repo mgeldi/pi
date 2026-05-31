@@ -75,6 +75,9 @@ Subagent workflow model:
   passed through the subagent `skill` override, for example `agent: "worker"`
   with `skill: ["frontend-design"]`; skill names are not valid implementation
   agent names.
+- Immediately polling `subagent status` after an async launch is blocked. The
+  async run should be watched through the tracking overlay unless there is a
+  concrete reason to inspect status later.
 - Fresh-context defaults are set for `scout`, `researcher`, `context-builder`,
   `planner`, `reviewer`, and `delegate` to reduce parent context bloat.
 - `worker` and `oracle` stay forked by default because they often need the

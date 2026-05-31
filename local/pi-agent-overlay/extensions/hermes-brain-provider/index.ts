@@ -903,12 +903,16 @@ function isLocalLoopbackCurlCommand(command: string): boolean {
 
 function isLocalExtractedScriptSyntaxCheck(command: string, cwd: string): boolean {
 	const normalized = stripHarmlessShellNoise(command.trim());
-	const match = normalized.match(
-		/^\s*grep\s+-oP\s+(['"])([\s\S]+)\1\s+([^\s'"`|;&<>$()]+)\s*>\s*(\/tmp\/[A-Za-z0-9._/-]+\.m?js)\s*&&\s*node\s+-c\s+([^\s'"`|;&<>$()]+)\s*(?:2>\s*&1)?\s*$/i,
-	);
+	const match =
+		normalized.match(
+			/^\s*grep\s+-oP\s+(['"])([\s\S]+)\1\s+([^\s'"`|;&<>$()]+)\s*>\s*(\/tmp\/[A-Za-z0-9._/-]+\.m?js)\s*&&\s*node\s+(?:-c|--check)\s+([^\s'"`|;&<>$()]+)\s*(?:2>\s*&1)?\s*$/i,
+		) ??
+		normalized.match(
+			/^\s*sed\s+-n\s+(['"])\/<script>\/,\/<\\\/script>\/p\1\s+([^\s'"`|;&<>$()]+)\s*\|\s*sed\s+(['"])1d;\$d\3\s*>\s*(\/tmp\/[A-Za-z0-9._/-]+\.m?js)\s*&&\s*node\s+(?:-c|--check)\s+([^\s'"`|;&<>$()]+)\s*(?:2>\s*&1)?\s*$/i,
+		);
 	if (!match) return false;
 
-	const sourcePath = resolveTarget(cwd, match[3]);
+	const sourcePath = resolveTarget(cwd, match[3] ?? match[2]);
 	const tempPath = match[4];
 	const checkedPath = match[5];
 	if (tempPath !== checkedPath) return false;

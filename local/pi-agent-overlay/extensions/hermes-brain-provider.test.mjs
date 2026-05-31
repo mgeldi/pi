@@ -318,20 +318,22 @@ test("allows local grep checks for sensitive-looking identifiers", async () => {
 });
 
 test("allows extracting local HTML script for node syntax check only", async () => {
-	const decision = await classifyToolPreflight(
-		{
-			toolName: "bash",
-			input: {
-				command:
-					"grep -oP '(?<=<script>)[\\s\\S]*?(?=</script>)' /workspace/project/galactic-colony.html > /tmp/game.js && node -c /tmp/game.js 2>&1",
+	for (const command of [
+		"grep -oP '(?<=<script>)[\\s\\S]*?(?=</script>)' /workspace/project/galactic-colony.html > /tmp/game.js && node -c /tmp/game.js 2>&1",
+		"sed -n '/<script>/,/<\\/script>/p' /workspace/project/galactic-colony.html | sed '1d;$d' > /tmp/game.js && node --check /tmp/game.js 2>&1",
+	]) {
+		const decision = await classifyToolPreflight(
+			{
+				toolName: "bash",
+				input: { command },
+				cwd: "/workspace/project",
 			},
-			cwd: "/workspace/project",
-		},
-		deps,
-	);
+			deps,
+		);
 
-	assert.equal(decision.action, "allow");
-	assert.equal(decision.reason, "local extracted script syntax check");
+		assert.equal(decision.action, "allow", command);
+		assert.equal(decision.reason, "local extracted script syntax check", command);
+	}
 });
 
 test("keeps extracted local scripts behind approval when they would execute", async () => {
