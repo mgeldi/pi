@@ -107,6 +107,10 @@ function hasExplicitDirectRequest(text: string): boolean {
 	return /\b(?:ohne\s+subagents?|no\s+subagents?|without\s+subagents?|mach\s+direkt|do\s+directly|direkt\s+machen|small\/direct|direct\s+mode)\b/i.test(text);
 }
 
+function isDelegatedSubagentPrompt(text: string): boolean {
+	return /\bdelegated\s+subagent\s+running\s+from\s+a\s+fork\s+of\s+the\s+parent\s+session\b/i.test(text);
+}
+
 function hasSingleFileArtifactRequest(text: string): boolean {
 	return /\b(?:single[-\s]?file|one[-\s]?file|in\s+(?:a\s+)?single\s+file|single\s+html\s+file|one\s+html\s+file|eine\s+(?:einzelne\s+)?(?:datei|html[-\s]?datei)|nur\s+eine\s+datei)\b/i.test(
 		text,
@@ -119,6 +123,14 @@ function hasSmallTaskMarker(text: string): boolean {
 
 export function classifyPromptForWorkflow(prompt: string): WorkflowPromptClassification {
 	const text = normalizeText(prompt);
+	if (isDelegatedSubagentPrompt(prompt)) {
+		return {
+			taskSize: "small",
+			explicitDirect: true,
+			reason: "delegated subagent execution prompt",
+		};
+	}
+
 	const singleFileArtifact = hasSingleFileArtifactRequest(prompt);
 	const explicitDirect = hasExplicitDirectRequest(prompt) || singleFileArtifact;
 	const smallMarker = hasSmallTaskMarker(prompt) || singleFileArtifact;

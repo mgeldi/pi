@@ -26,6 +26,19 @@ test("classifies explicit single-file artifact prompts as small", () => {
 	assert.equal(result.explicitDirect, true);
 });
 
+test("classifies delegated subagent prompts as direct execution", () => {
+	const result = classifyPromptForWorkflow(
+		[
+			"Task: You are a delegated subagent running from a fork of the parent session.",
+			"Your sole job is to execute the task below and return a focused result.",
+			"Task: Implement the approved feature across several files and run validation.",
+		].join("\n\n"),
+	);
+
+	assert.equal(result.taskSize, "small");
+	assert.equal(result.explicitDirect, true);
+});
+
 test("detects explicit direct escape hatch", () => {
 	const result = classifyPromptForWorkflow("mach direkt, ohne subagents: ändere diese eine README-Zeile");
 
