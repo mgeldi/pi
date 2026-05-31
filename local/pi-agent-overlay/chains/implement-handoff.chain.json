@@ -1,0 +1,24 @@
+{
+  "name": "implement-handoff",
+  "description": "Single forked worker implementation with explicit acceptance evidence.",
+  "chain": [
+    {
+      "agent": "worker",
+      "phase": "Implementation",
+      "label": "Single writer",
+      "as": "workerResult",
+      "task": "Implement the approved request as the sole writer. Keep scope narrow, follow existing project patterns, and escalate unapproved product, architecture, or scope decisions instead of guessing.\n\nApproved request:\n{task}\n\nReturn a handoff with changed files, what was implemented, what was left undone, commands run with exit codes, validation evidence, surprises or new risks, and decisions needing parent approval.",
+      "output": "implement/worker-handoff.md",
+      "outputMode": "file-only",
+      "progress": true,
+      "acceptance": {
+        "criteria": [
+          "Implement the approved request without widening scope.",
+          "Return evidence for changed files, validation, residual risks, and open decisions."
+        ],
+        "evidence": ["changed-files", "commands-run", "validation-output", "residual-risks", "no-staged-files"],
+        "maxFinalizationTurns": 2
+      }
+    }
+  ]
+}

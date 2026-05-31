@@ -14,6 +14,11 @@ core files. That keeps upstream merges simple: update the fork from
 - `models.json`: Hermes Brain and Hermes Approval provider definitions.
 - `extensions/hermes-brain-provider/`: local Hermes provider and approval policy.
 - `extensions/hermes-brain-provider.test.mjs`: regression tests for the approval policy.
+- `extensions/workflow-guard/`: local workflow gate that injects the
+  `using-superpowers` skill and blocks mutations until the agent declares a
+  direct/subagent workflow decision.
+- `extensions/workflow-guard.test.mjs`: regression tests for workflow gating.
+- `chains/`: saved `pi-subagents` workflows copied into `~/.pi/agent/chains`.
 - `skills/todo-tool/SKILL.md`: local todo tool skill instructions.
 - `themes/rnk-dark.json`: global custom Pi theme.
 - `npm/package.json` and `npm/package-lock.json`: pinned local Pi package
@@ -37,6 +42,49 @@ Verification model:
   checks such as builds, tests, and lint commands.
 - Avoid hard global build assumptions. Repositories with legacy toolchains or
   nested projects should define `.pi/verify.json` locally.
+
+Subagent workflow model:
+
+- The main Pi session is the persistent supervisor. It owns user communication,
+  decisions, accepted scope, final synthesis, and completion claims.
+- `workflow-guard` adds a structural gate: before `edit`, `write`, `append`, or
+  obvious mutating bash commands, the agent must call `workflow_decision`.
+- For substantial tasks, `workflow_decision` must select `subagent`, declare
+  `using-superpowers` plus an execution skill such as
+  `subagent-driven-development`, and run a subagent before the first mutation.
+- Explicit user escape hatches such as `mach direkt`, `ohne subagents`, or
+  `no subagents` allow direct mode.
+- Read-only inspection remains free: `read`, `grep`, `find`, `ls`, read-only
+  bash, todo/status/list tools, and subagent discovery/status are not gated.
+- Subagents are disposable focused sessions. Prefer them for scouting, context
+  building, planning, research, review, validation, and larger implementation
+  handoffs.
+- Fresh-context defaults are set for `scout`, `researcher`, `context-builder`,
+  `planner`, `reviewer`, and `delegate` to reduce parent context bloat.
+- `worker` and `oracle` stay forked by default because they often need the
+  parent session's approved decisions and trajectory.
+- `reviewer` is read-only by default in this overlay. Fixes should flow through
+  the main session's synthesis and a single `worker` writer pass.
+- Normal writes/appends should stay single-threaded in one active worktree.
+  Parallelize reading, research, review, and validation; use worktrees only when
+  parallel writers are explicitly intended.
+- Saved chains:
+  - `investigate-plan`: fresh scout/context-builder fanout followed by a plan.
+  - `implement-handoff`: forked single-worker implementation with acceptance
+    evidence.
+  - `parallel-review`: fresh read-only review fanout for correctness,
+    validation, and simplicity.
+
+Hermes context model:
+
+- The static fallback context is `150000` tokens per Pi session, matching a
+  conservative half of a two-slot roughly-300k Hermes Brain setup.
+- The provider extension still tries runtime detection through Hermes
+  `/props`, `/slots`, and `/v1/models`; detected `n_ctx_slot` values override
+  the static fallback.
+- Main-session history should only be reduced by Pi compaction. Worker and
+  review context should be discarded naturally by using fresh/forked child
+  sessions and compact handoffs instead of copying full transcripts back.
 
 Excluded on purpose:
 

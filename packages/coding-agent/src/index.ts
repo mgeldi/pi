@@ -178,6 +178,7 @@ export {
 	createAgentSessionFromServices,
 	createAgentSessionRuntime,
 	createAgentSessionServices,
+	createAppendTool,
 	createBashTool,
 	// Tool factories (for custom cwd)
 	createCodingTools,
@@ -233,12 +234,16 @@ export {
 export { createSyntheticSourceInfo } from "./core/source-info.ts";
 // Tools
 export {
+	type AppendOperations,
+	type AppendToolInput,
+	type AppendToolOptions,
 	type BashOperations,
 	type BashSpawnContext,
 	type BashSpawnHook,
 	type BashToolDetails,
 	type BashToolInput,
 	type BashToolOptions,
+	createAppendToolDefinition,
 	createBashToolDefinition,
 	createEditToolDefinition,
 	createFindToolDefinition,

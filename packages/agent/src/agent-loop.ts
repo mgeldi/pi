@@ -520,6 +520,7 @@ type PreparedToolCall = {
 	toolCall: AgentToolCall;
 	tool: AgentTool<any>;
 	args: unknown;
+	lengthTruncated: boolean;
 };
 
 type ImmediateToolCallOutcome = {
@@ -541,8 +542,18 @@ type FinalizedToolCallOutcome = {
 
 type FinalizedToolCallEntry = FinalizedToolCallOutcome | (() => Promise<FinalizedToolCallOutcome>);
 
+const LENGTH_TRUNCATED_FILE_CONTINUATION_TOOLS = new Set(["write", "append"]);
+
 function shouldTerminateToolBatch(finalizedCalls: FinalizedToolCallOutcome[]): boolean {
 	return finalizedCalls.length > 0 && finalizedCalls.every((finalized) => finalized.result.terminate === true);
+}
+
+function isLengthTruncatedToolCall(assistantMessage: AssistantMessage): boolean {
+	return assistantMessage.stopReason === "length";
+}
+
+function isFileContinuationTool(toolCall: AgentToolCall): boolean {
+	return LENGTH_TRUNCATED_FILE_CONTINUATION_TOOLS.has(toolCall.name);
 }
 
 function prepareToolCallArguments(tool: AgentTool<any>, toolCall: AgentToolCall): AgentToolCall {
@@ -610,11 +621,20 @@ async function prepareToolCall(
 				isError: true,
 			};
 		}
+		const lengthTruncated = isLengthTruncatedToolCall(assistantMessage);
+		if (lengthTruncated && !isFileContinuationTool(toolCall)) {
+			return {
+				kind: "immediate",
+				result: createLengthTruncatedBlockedResult(toolCall),
+				isError: true,
+			};
+		}
 		return {
 			kind: "prepared",
 			toolCall,
 			tool,
 			args: validatedArgs,
+			lengthTruncated,
 		};
 	} catch (error) {
 		return {
@@ -700,10 +720,45 @@ async function finalizeExecutedToolCall(
 		}
 	}
 
+	if (prepared.lengthTruncated) {
+		result = createLengthTruncatedPartialResult(prepared.toolCall, result);
+		isError = true;
+	}
+
 	return {
 		toolCall: prepared.toolCall,
 		result,
 		isError,
+	};
+}
+
+function createLengthTruncatedBlockedResult(toolCall: AgentToolCall): AgentToolResult<any> {
+	return createErrorToolResult(
+		`Tool call "${toolCall.name}" was not executed because the assistant stopped with stopReason=length while streaming tool arguments. Retry with a smaller, complete tool call.`,
+	);
+}
+
+function createLengthTruncatedPartialResult(
+	toolCall: AgentToolCall,
+	result: AgentToolResult<any>,
+): AgentToolResult<any> {
+	return {
+		content: [
+			{
+				type: "text",
+				text: [
+					`Partial ${toolCall.name} applied because the assistant stopped with stopReason=length while streaming tool arguments.`,
+					"The file now contains only the generated prefix or chunk.",
+					"Continue from the exact file tail using read plus append/edit in smaller chunks.",
+					"Do not rewrite from scratch or repeat already-written content.",
+				].join("\n"),
+			},
+		],
+		details: {
+			...(typeof result.details === "object" && result.details !== null ? result.details : {}),
+			partialDueToLength: true,
+		},
+		terminate: false,
 	};
 }
 

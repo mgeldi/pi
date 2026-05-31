@@ -52,7 +52,7 @@ test("keeps local reads piped to network tools behind approval", async () => {
 });
 
 test("allows safe agent meta tools", async () => {
-	for (const toolName of ["todo", "todos", "update_plan"]) {
+	for (const toolName of ["todo", "todos", "update_plan", "workflow_decision"]) {
 		const decision = await classifyToolPreflight(
 			{
 				toolName,
@@ -437,6 +437,45 @@ test("trusted project allows in-project edit that would otherwise ask sidecar", 
 	assert.equal(trusted.reason, "trusted project grant");
 });
 
+test("trusted project allows in-project append that would otherwise ask sidecar", async () => {
+	const call = {
+		toolName: "append",
+		input: {
+			path: "src/app.ts",
+			content: "export const nextValue = 2;\n",
+		},
+		cwd: "/workspace/project",
+	};
+	const decision = await classifyToolPreflight(call, {
+		...deps,
+		pathExists: async () => true,
+		readFile: async () => "export const oldValue = 1;\n",
+		gitState: async () => ({ insideWorkTree: true, tracked: true, clean: false, status: " M src/app.ts" }),
+	});
+
+	assert.equal(decision.action, "sidecar");
+
+	const trusted = applyTrustedProjectGrant(decision, call, "/workspace/project");
+
+	assert.equal(trusted.action, "allow");
+	assert.equal(trusted.reason, "trusted project grant");
+});
+
+test("trusted tool memory does not override append", async () => {
+	const toolMemory = createTrustedToolMemory();
+	const call = {
+		toolName: "append",
+		input: { path: "notes.txt", content: "next\n" },
+		cwd: "/workspace/project",
+	};
+	const decision = await classifyToolPreflight(call, deps);
+
+	toolMemory.grant("append");
+	const trusted = applyTrustedToolGrant(decision, call, toolMemory);
+
+	assert.notEqual(trusted.action, "allow");
+});
+
 test("trusted project allows normal project-local shell commands", async () => {
 	const call = {
 		toolName: "bash",
@@ -559,7 +598,7 @@ test("trusted project does not allow obvious credential files", async () => {
 test("formats trust status for project approval summaries", () => {
 	assert.equal(
 		formatTrustStatus("/workspace/project", 2),
-		"Trusted project: /workspace/project | Auto-allow: reads, in-project edits/writes, normal project-local shell | Still asks: network, secrets, package installs, system changes, high-risk git | Trusted commands: 2",
+		"Trusted project: /workspace/project | Auto-allow: reads, in-project edits/writes/appends, normal project-local shell | Still asks: network, secrets, package installs, system changes, high-risk git | Trusted commands: 2",
 	);
 });
 

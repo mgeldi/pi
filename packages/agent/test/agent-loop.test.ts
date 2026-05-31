@@ -307,6 +307,152 @@ describe("agentLoop with AgentMessage", () => {
 		}
 	});
 
+	it("should mark length-truncated write tool calls as partial and continue", async () => {
+		const toolSchema = Type.Object({ path: Type.String(), content: Type.String() });
+		const executed: Array<{ path: string; content: string }> = [];
+		const tool: AgentTool<typeof toolSchema, undefined> = {
+			name: "write",
+			label: "Write",
+			description: "Write tool",
+			parameters: toolSchema,
+			async execute(_toolCallId, params) {
+				executed.push(params);
+				return {
+					content: [{ type: "text", text: `Successfully wrote ${params.content.length} bytes` }],
+					details: undefined,
+				};
+			},
+		};
+
+		const context: AgentContext = {
+			systemPrompt: "",
+			messages: [],
+			tools: [tool],
+		};
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+			afterToolCall: async () => ({
+				content: [{ type: "text", text: "HTML clean" }],
+				isError: false,
+			}),
+		};
+
+		let llmCalls = 0;
+		const stream = agentLoop([createUserMessage("write a large file")], context, config, undefined, () => {
+			llmCalls++;
+			const mockStream = new MockAssistantStream();
+			queueMicrotask(() => {
+				if (llmCalls === 1) {
+					mockStream.push({
+						type: "done",
+						reason: "length",
+						message: createAssistantMessage(
+							[
+								{
+									type: "toolCall",
+									id: "tool-1",
+									name: "write",
+									arguments: { path: "large.html", content: "<html><script>partial" },
+								},
+							],
+							"length",
+						),
+					});
+					return;
+				}
+				mockStream.push({
+					type: "done",
+					reason: "stop",
+					message: createAssistantMessage([{ type: "text", text: "continuing after partial write" }]),
+				});
+			});
+			return mockStream;
+		});
+
+		for await (const _event of stream) {
+			// consume
+		}
+
+		const messages = await stream.result();
+		const toolResult = messages.find((message) => message.role === "toolResult");
+		const resultText = toolResult?.content.map((content) => (content.type === "text" ? content.text : "")).join("\n");
+
+		expect(executed).toEqual([{ path: "large.html", content: "<html><script>partial" }]);
+		expect(llmCalls).toBe(2);
+		expect(toolResult).toMatchObject({ role: "toolResult", toolName: "write", isError: true });
+		expect(resultText).toContain("Partial write applied");
+		expect(resultText).toContain("stopReason=length");
+		expect(resultText).not.toContain("HTML clean");
+	});
+
+	it("should not execute length-truncated non-file-continuation tool calls", async () => {
+		const toolSchema = Type.Object({ command: Type.String() });
+		const executed: string[] = [];
+		const tool: AgentTool<typeof toolSchema, undefined> = {
+			name: "bash",
+			label: "Bash",
+			description: "Bash tool",
+			parameters: toolSchema,
+			async execute(_toolCallId, params) {
+				executed.push(params.command);
+				return {
+					content: [{ type: "text", text: "ran command" }],
+					details: undefined,
+				};
+			},
+		};
+
+		const context: AgentContext = {
+			systemPrompt: "",
+			messages: [],
+			tools: [tool],
+		};
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+		};
+
+		let llmCalls = 0;
+		const stream = agentLoop([createUserMessage("run a command")], context, config, undefined, () => {
+			llmCalls++;
+			const mockStream = new MockAssistantStream();
+			queueMicrotask(() => {
+				if (llmCalls === 1) {
+					mockStream.push({
+						type: "done",
+						reason: "length",
+						message: createAssistantMessage(
+							[{ type: "toolCall", id: "tool-1", name: "bash", arguments: { command: "rm -rf tmp" } }],
+							"length",
+						),
+					});
+					return;
+				}
+				mockStream.push({
+					type: "done",
+					reason: "stop",
+					message: createAssistantMessage([{ type: "text", text: "retrying safely" }]),
+				});
+			});
+			return mockStream;
+		});
+
+		for await (const _event of stream) {
+			// consume
+		}
+
+		const messages = await stream.result();
+		const toolResult = messages.find((message) => message.role === "toolResult");
+		const resultText = toolResult?.content.map((content) => (content.type === "text" ? content.text : "")).join("\n");
+
+		expect(executed).toEqual([]);
+		expect(llmCalls).toBe(2);
+		expect(toolResult).toMatchObject({ role: "toolResult", toolName: "bash", isError: true });
+		expect(resultText).toContain("not executed");
+		expect(resultText).toContain("stopReason=length");
+	});
+
 	it("should execute mutated beforeToolCall args without revalidation", async () => {
 		const toolSchema = Type.Object({ value: Type.String() });
 		const executed: Array<string | number> = [];

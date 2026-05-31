@@ -7,6 +7,7 @@ import { executeBashWithOperations } from "../src/core/bash-executor.ts";
 import { type BashOperations, createBashTool, createLocalBashOperations } from "../src/core/tools/bash.ts";
 import { computeEditsDiff } from "../src/core/tools/edit-diff.ts";
 import {
+	createAppendTool,
 	createEditTool,
 	createFindTool,
 	createGrepTool,
@@ -18,6 +19,7 @@ import * as shellModule from "../src/utils/shell.ts";
 
 const readTool = createReadTool(process.cwd());
 const writeTool = createWriteTool(process.cwd());
+const appendTool = createAppendTool(process.cwd());
 const editTool = createEditTool(process.cwd());
 const bashTool = createBashTool(process.cwd());
 const grepTool = createGrepTool(process.cwd());
@@ -221,6 +223,19 @@ describe("Coding Agent Tools", () => {
 			const result = await writeTool.execute("test-call-4", { path: testFile, content });
 
 			expect(getTextOutput(result)).toContain("Successfully wrote");
+		});
+	});
+
+	describe("append tool", () => {
+		it("should append file contents and create parent directories", async () => {
+			const testFile = join(testDir, "nested", "append-test.txt");
+
+			const first = await appendTool.execute("test-call-append-1", { path: testFile, content: "Hello" });
+			const second = await appendTool.execute("test-call-append-2", { path: testFile, content: ", world!" });
+
+			expect(getTextOutput(first)).toContain("Successfully appended");
+			expect(getTextOutput(second)).toContain("Successfully appended");
+			expect(readFileSync(testFile, "utf8")).toBe("Hello, world!");
 		});
 	});
 

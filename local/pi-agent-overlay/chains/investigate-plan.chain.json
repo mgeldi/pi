@@ -1,0 +1,38 @@
+{
+  "name": "investigate-plan",
+  "description": "Fresh-context scout and context-builder pass followed by a concise plan.",
+  "chain": [
+    {
+      "parallel": [
+        {
+          "agent": "scout",
+          "phase": "Context",
+          "label": "Map code",
+          "as": "codeContext",
+          "task": "Map the local code context for this request. Focus on relevant files, entry points, current patterns, likely change points, and risks. Keep the result compact and cite exact paths and line ranges.\n\nRequest:\n{task}",
+          "output": "investigate/code-context.md",
+          "progress": true
+        },
+        {
+          "agent": "context-builder",
+          "phase": "Context",
+          "label": "Validation and risks",
+          "as": "validationContext",
+          "task": "Build validation and risk context for this request. Identify likely checks, missing information, acceptance criteria, risky assumptions, and decisions that require parent approval. Keep the result compact and cite evidence.\n\nRequest:\n{task}",
+          "output": "investigate/validation-context.md",
+          "progress": true
+        }
+      ],
+      "concurrency": 2
+    },
+    {
+      "agent": "planner",
+      "phase": "Planning",
+      "label": "Synthesize plan",
+      "as": "plan",
+      "task": "Create a concise implementation plan from the gathered context. Include scope, non-goals, files likely to change, validation commands, and open decisions. Do not edit files.\n\nOriginal request:\n{task}\n\nCode context:\n{outputs.codeContext}\n\nValidation and risk context:\n{outputs.validationContext}",
+      "output": "investigate/plan.md",
+      "progress": true
+    }
+  ]
+}

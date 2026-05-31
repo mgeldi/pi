@@ -34,6 +34,7 @@ describe("buildSystemPrompt", () => {
 					bash: "Execute bash commands",
 					edit: "Make surgical edits",
 					write: "Create or overwrite files",
+					append: "Append content to files",
 				},
 				contextFiles: [],
 				skills: [],
@@ -44,6 +45,7 @@ describe("buildSystemPrompt", () => {
 			expect(prompt).toContain("- bash:");
 			expect(prompt).toContain("- edit:");
 			expect(prompt).toContain("- write:");
+			expect(prompt).toContain("- append:");
 		});
 
 		test("instructs models to resolve pi docs and examples under absolute base paths", () => {

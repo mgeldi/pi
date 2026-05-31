@@ -21,7 +21,45 @@
       "maxRetryDelayMs": 10000
     }
   },
+  "subagents": {
+    "agentOverrides": {
+      "scout": {
+        "defaultContext": "fresh",
+        "thinking": "low"
+      },
+      "researcher": {
+        "defaultContext": "fresh",
+        "thinking": "medium"
+      },
+      "context-builder": {
+        "defaultContext": "fresh",
+        "thinking": "medium"
+      },
+      "planner": {
+        "defaultContext": "fresh",
+        "thinking": "high"
+      },
+      "reviewer": {
+        "defaultContext": "fresh",
+        "thinking": "high",
+        "tools": ["read", "grep", "find", "ls", "bash", "contact_supervisor"]
+      },
+      "delegate": {
+        "defaultContext": "fresh",
+        "thinking": "medium"
+      },
+      "worker": {
+        "defaultContext": "fork",
+        "thinking": "high"
+      },
+      "oracle": {
+        "defaultContext": "fork",
+        "thinking": "high"
+      }
+    }
+  },
   "extensions": [
+    "extensions/workflow-guard/index.ts",
     "extensions/hermes-brain-provider/index.ts"
   ],
   "themes": [

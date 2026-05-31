@@ -11,7 +11,7 @@ const PRIMARY = {
 	provider: "hermes-brain",
 	model: "hermes-brain",
 	baseUrl: "http://127.0.0.1:8081/v1",
-	fallbackContext: 200000,
+	fallbackContext: 150000,
 	maxTokens: 32768,
 };
 
@@ -139,9 +139,10 @@ const SAFE_AGENT_META_TOOL_NAMES = new Set([
 	"todo",
 	"todos",
 	"update_plan",
+	"workflow_decision",
 ]);
 
-const CORE_MUTATING_TOOL_NAMES = new Set(["bash", "edit", "write"]);
+const CORE_MUTATING_TOOL_NAMES = new Set(["bash", "edit", "write", "append"]);
 
 const CONTEXT_MODE_READ_ONLY_TOOL_NAMES = new Set([
 	"ctx_doctor",
@@ -1020,7 +1021,7 @@ export function isTrustedProjectEligible(
 	if (preflight.action === "allow" || !preflight.mutation) return false;
 	if (preflight.reason.startsWith("previous user denial")) return false;
 
-	if (call.toolName === "edit" || call.toolName === "write") {
+	if (call.toolName === "edit" || call.toolName === "write" || call.toolName === "append") {
 		if (!preflight.targetPaths?.length) return false;
 		return preflight.targetPaths.every((path) => isPathInsideRoot(path, projectRoot) && !isSensitivePath(path));
 	}
@@ -1456,6 +1457,48 @@ export async function classifyToolPreflight(
 		}, [target]);
 	}
 
+	if (call.toolName === "append") {
+		const path = typeof call.input.path === "string" ? call.input.path : undefined;
+		const content = typeof call.input.content === "string" ? call.input.content : undefined;
+		if (!path || content === undefined) return { action: "ask", reason: "malformed append input" };
+		const target = resolveTarget(call.cwd, path);
+		const exists = await deps.pathExists(target);
+		const current = exists ? await deps.readFile(target) : undefined;
+		const git = await deps.gitState(call.cwd, target);
+		const appended = `${current ?? ""}${content}`;
+		const summary = summarizeWriteInput(path, appended, current);
+
+		if (!exists) {
+			if (summary.isHuge) {
+				return mutationDecision({
+					action: "ask",
+					reason: "large appended new file requires human confirmation",
+					approvalPrompt: approvalPrompt("append", "large new file", git, summary),
+				}, [target]);
+			}
+			return mutationDecision({
+				action: "sidecar",
+				reason: "appended new file creation requires approval sidecar",
+				approvalPrompt: approvalPrompt("append", "new file", git, summary),
+			}, [target]);
+		}
+		if (summary.isHuge) {
+			return mutationDecision({
+				action: "ask",
+				reason: "large append requires human confirmation",
+				approvalPrompt: approvalPrompt("append", "large append", git, summary),
+			}, [target]);
+		}
+		if (git.insideWorkTree && git.tracked && git.clean && summary.isSmall) {
+			return mutationDecision({ action: "allow", reason: "small append to clean tracked file is reversible by git" }, [target]);
+		}
+		return mutationDecision({
+			action: "sidecar",
+			reason: git.clean ? "append requires approval sidecar" : "dirty or untracked append requires approval sidecar",
+			approvalPrompt: approvalPrompt("append", "append not auto-approved", git, summary),
+		}, [target]);
+	}
+
 	return { action: "sidecar", reason: `unknown mutability for tool ${call.toolName}`, mutation: true };
 }
 
@@ -1532,7 +1575,7 @@ export function formatHumanPrompt(decision: PreflightDecision): string {
 export function formatTrustStatus(projectRoot: string, trustedCommandCount: number): string {
 	return [
 		`Trusted project: ${projectRoot}`,
-		"Auto-allow: reads, in-project edits/writes, normal project-local shell",
+		"Auto-allow: reads, in-project edits/writes/appends, normal project-local shell",
 		"Still asks: network, secrets, package installs, system changes, high-risk git",
 		`Trusted commands: ${trustedCommandCount}`,
 	].join(" | ");
@@ -1635,7 +1678,7 @@ async function askHuman(ctx: Parameters<Parameters<ExtensionAPI["on"]>[1]>[1], d
 function formatProjectTrustPrompt(projectRoot: string, decision: PreflightDecision): string {
 	return [
 		`Allow Pi to work inside this project for this session?\n\nProject: ${projectRoot}`,
-		"This auto-approves in-project file edits/writes and normal project-local shell commands.",
+		"This auto-approves in-project file edits/writes/appends and normal project-local shell commands.",
 		"External paths, system commands, network uploads, package installs, credentials, and high-risk git operations will still require approval.",
 		decision.approvalPrompt ? `Current operation:\n${truncate(decision.approvalPrompt, 1200)}` : `Current operation: ${decision.reason}`,
 	].join("\n\n");
@@ -1662,7 +1705,7 @@ function formatToolTrustPrompt(toolName: string, decision: PreflightDecision): s
 	return [
 		`Allow Pi to use this tool for this session?\n\nTool: ${toolName}`,
 		"This is only for this Pi session and only for this exact tool name.",
-		"Core tools such as bash, edit, and write cannot be globally trusted this way.",
+		"Core tools such as bash, edit, write, and append cannot be globally trusted this way.",
 		decision.approvalPrompt ? `Current operation:\n${truncate(decision.approvalPrompt, 1200)}` : `Current operation: ${decision.reason}`,
 	].join("\n\n");
 }

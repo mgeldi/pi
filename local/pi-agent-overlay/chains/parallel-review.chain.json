@@ -1,0 +1,35 @@
+{
+  "name": "parallel-review",
+  "description": "Fresh-context parallel review from correctness, validation, and simplicity angles.",
+  "chain": [
+    {
+      "parallel": [
+        {
+          "agent": "reviewer",
+          "phase": "Review",
+          "label": "Correctness",
+          "task": "Review the current repo state or diff for correctness, regressions, edge cases, and requirement mismatches. Do not modify project/source files. Report only evidence-backed findings with exact file paths and line numbers.\n\nReview target:\n{task}",
+          "output": false,
+          "progress": false
+        },
+        {
+          "agent": "reviewer",
+          "phase": "Review",
+          "label": "Validation",
+          "task": "Review the current repo state or diff for tests, build/lint/typecheck coverage, missing validation, and commands that still need to run. Do not modify project/source files. Report only evidence-backed findings with exact file paths and line numbers.\n\nReview target:\n{task}",
+          "output": false,
+          "progress": false
+        },
+        {
+          "agent": "reviewer",
+          "phase": "Review",
+          "label": "Simplicity",
+          "task": "Review the current repo state or diff for unnecessary complexity, inconsistent local patterns, avoidable abstractions, and maintainability issues. Do not modify project/source files. Report only evidence-backed findings with exact file paths and line numbers.\n\nReview target:\n{task}",
+          "output": false,
+          "progress": false
+        }
+      ],
+      "concurrency": 3
+    }
+  ]
+}
