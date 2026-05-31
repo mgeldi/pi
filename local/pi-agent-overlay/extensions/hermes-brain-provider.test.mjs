@@ -317,6 +317,40 @@ test("allows local grep checks for sensitive-looking identifiers", async () => {
 	}
 });
 
+test("allows extracting local HTML script for node syntax check only", async () => {
+	const decision = await classifyToolPreflight(
+		{
+			toolName: "bash",
+			input: {
+				command:
+					"grep -oP '(?<=<script>)[\\s\\S]*?(?=</script>)' /workspace/project/galactic-colony.html > /tmp/game.js && node -c /tmp/game.js 2>&1",
+			},
+			cwd: "/workspace/project",
+		},
+		deps,
+	);
+
+	assert.equal(decision.action, "allow");
+	assert.equal(decision.reason, "local extracted script syntax check");
+});
+
+test("keeps extracted local scripts behind approval when they would execute", async () => {
+	const decision = await classifyToolPreflight(
+		{
+			toolName: "bash",
+			input: {
+				command:
+					"grep -oP '(?<=<script>)[\\s\\S]*?(?=</script>)' /workspace/project/galactic-colony.html > /tmp/game.js && node /tmp/game.js",
+			},
+			cwd: "/workspace/project",
+		},
+		deps,
+	);
+
+	assert.equal(decision.action, "sidecar");
+	assert.equal(decision.reason, "shell redirection, substitution, or backgrounding requires approval sidecar");
+});
+
 test("allows local archive and binary metadata inspection commands", async () => {
 	for (const command of [
 		"tar -tf archive.tar.gz | head -20",

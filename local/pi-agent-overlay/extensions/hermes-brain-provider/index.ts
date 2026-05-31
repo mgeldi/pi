@@ -901,6 +901,22 @@ function isLocalLoopbackCurlCommand(command: string): boolean {
 	);
 }
 
+function isLocalExtractedScriptSyntaxCheck(command: string, cwd: string): boolean {
+	const normalized = stripHarmlessShellNoise(command.trim());
+	const match = normalized.match(
+		/^\s*grep\s+-oP\s+(['"])([\s\S]+)\1\s+([^\s'"`|;&<>$()]+)\s*>\s*(\/tmp\/[A-Za-z0-9._/-]+\.m?js)\s*&&\s*node\s+-c\s+([^\s'"`|;&<>$()]+)\s*(?:2>\s*&1)?\s*$/i,
+	);
+	if (!match) return false;
+
+	const sourcePath = resolveTarget(cwd, match[3]);
+	const tempPath = match[4];
+	const checkedPath = match[5];
+	if (tempPath !== checkedPath) return false;
+	if (!isPathInsideRoot(sourcePath, cwd) || isSensitivePath(sourcePath)) return false;
+	if (!tempPath.startsWith("/tmp/") || tempPath.includes("..")) return false;
+	return true;
+}
+
 function isObviouslyReadOnly(command: string, substitutionDepth = 0): boolean {
 	const trimmed = command.trim();
 	if (!trimmed) return false;
@@ -1320,6 +1336,9 @@ export async function classifyToolPreflight(
 		if (isSkillsCliDiscovery(command)) return { action: "allow", reason: "skills CLI discovery command" };
 		if (isVerificationCommand(command)) return { action: "allow", reason: "known verification command" };
 		if (isLocalLoopbackCurlCommand(command)) return { action: "allow", reason: "local loopback curl command" };
+		if (isLocalExtractedScriptSyntaxCheck(command, call.cwd)) {
+			return { action: "allow", reason: "local extracted script syntax check" };
+		}
 		if (isObviouslyReadOnly(command)) return { action: "allow", reason: "read-only bash command" };
 		if (hasNetworkOrExternalCommand(command)) {
 			return mutationDecision({
