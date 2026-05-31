@@ -3,6 +3,7 @@ import { test } from "node:test";
 
 import {
 	classifyPromptForWorkflow,
+	createWorkflowGuardStateForPrompt,
 	evaluateMutationGate,
 	findSkillLocation,
 	isMutatingToolCall,
@@ -17,13 +18,13 @@ test("classifies substantial implementation prompts", () => {
 	assert.equal(result.explicitDirect, false);
 });
 
-test("classifies explicit single-file artifact prompts as small", () => {
+test("classifies substantial single-file artifact prompts as substantial", () => {
 	const result = classifyPromptForWorkflow(
 		"Create a polished galactic colony browser game as a single HTML file in galactic-colony.html.",
 	);
 
-	assert.equal(result.taskSize, "small");
-	assert.equal(result.explicitDirect, true);
+	assert.equal(result.taskSize, "substantial");
+	assert.equal(result.explicitDirect, false);
 });
 
 test("classifies delegated subagent prompts as direct execution", () => {
@@ -64,6 +65,20 @@ test("gates source mutations without workflow decision", () => {
 	assert.match(result.reason, /workflow_decision/);
 });
 
+test("preselects subagent workflow for substantial prompts", () => {
+	const state = createWorkflowGuardStateForPrompt(
+		"Create a polished galactic colony browser game as a single HTML file in galactic-colony.html.",
+	);
+
+	assert.equal(state.classification.taskSize, "substantial");
+	assert.equal(state.decision?.mode, "subagent");
+
+	const result = evaluateMutationGate(state, { toolName: "write", input: { path: "galactic-colony.html" } });
+
+	assert.equal(result.block, true);
+	assert.match(result.reason, /Run a subagent/);
+});
+
 test("treats append as a source mutation", () => {
 	assert.equal(isMutatingToolCall({ toolName: "append", input: { path: "src/app.ts", content: "x" } }), true);
 });
@@ -71,11 +86,11 @@ test("treats append as a source mutation", () => {
 test("allows small direct tasks without an explicit workflow decision", () => {
 	const result = evaluateMutationGate(
 		{
-			classification: classifyPromptForWorkflow("Create a single HTML file game in galactic-colony.html."),
+			classification: classifyPromptForWorkflow("Fix one typo in README.md."),
 			decision: undefined,
 			subagentStarted: false,
 		},
-		{ toolName: "write", input: { path: "galactic-colony.html", content: "<!doctype html>" } },
+		{ toolName: "edit", input: { path: "README.md", oldText: "teh", newText: "the" } },
 	);
 
 	assert.equal(result.block, false);

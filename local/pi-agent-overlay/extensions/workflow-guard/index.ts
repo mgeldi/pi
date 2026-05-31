@@ -117,6 +117,12 @@ function hasSingleFileArtifactRequest(text: string): boolean {
 	);
 }
 
+function hasSubstantialArtifactMarker(text: string): boolean {
+	return /\b(?:app|application|browser\s+game|dashboard|frontend|game|interactive|playable|polished|site|spiel|tool|ui|website|web\s+app)\b/i.test(
+		text,
+	);
+}
+
 function hasSmallTaskMarker(text: string): boolean {
 	return /\b(?:typo|tippfehler|one[-\s]?line|einzeil|klein(?:e|er|es)?|tiny|quick|kurz|nur\s+(?:eine|1)\s+(?:zeile|line))\b/i.test(text);
 }
@@ -132,9 +138,14 @@ export function classifyPromptForWorkflow(prompt: string): WorkflowPromptClassif
 	}
 
 	const singleFileArtifact = hasSingleFileArtifactRequest(prompt);
-	const explicitDirect = hasExplicitDirectRequest(prompt) || singleFileArtifact;
-	const smallMarker = hasSmallTaskMarker(prompt) || singleFileArtifact;
-	const substantialMarker = /\b(?:implement|implementiere|build|baue|feature|bugfix|fix|refactor|refaktor|rewrite|migration|upgrade|workflow|harness|extension|architecture|architektur|tests?|tdd|review|substantial|umfangreich|größer|komplex|multi[-\s]?file|mehrere\s+dateien)\b/i.test(prompt);
+	const explicitDirect = hasExplicitDirectRequest(prompt);
+	const smallMarker = hasSmallTaskMarker(prompt);
+	const substantialArtifact = singleFileArtifact && hasSubstantialArtifactMarker(prompt);
+	const substantialMarker =
+		substantialArtifact ||
+		/\b(?:implement|implementiere|build|baue|feature|bugfix|fix|refactor|refaktor|rewrite|migration|upgrade|workflow|harness|extension|architecture|architektur|tests?|tdd|review|substantial|umfangreich|größer|komplex|multi[-\s]?file|mehrere\s+dateien)\b/i.test(
+			prompt,
+		);
 	const longPrompt = text.length > 180;
 
 	if (!explicitDirect && !smallMarker && (substantialMarker || longPrompt)) {
@@ -149,6 +160,25 @@ export function classifyPromptForWorkflow(prompt: string): WorkflowPromptClassif
 		taskSize: "small",
 		explicitDirect,
 		reason: explicitDirect ? "user explicitly requested direct execution" : "prompt appears small",
+	};
+}
+
+export function createWorkflowGuardStateForPrompt(prompt: string): WorkflowGuardState {
+	const classification = classifyPromptForWorkflow(prompt);
+	const decision =
+		classification.taskSize === "substantial" && !classification.explicitDirect
+			? {
+					mode: "subagent" as const,
+					taskSize: "substantial" as const,
+					skills: ["using-superpowers", "subagent-driven-development"],
+					reason: "Harness selected subagent workflow for substantial work.",
+				}
+			: undefined;
+
+	return {
+		classification,
+		decision,
+		subagentStarted: false,
 	};
 }
 
@@ -269,9 +299,9 @@ function buildWorkflowSystemPrompt(systemPrompt: string, prompt: string): string
 	const guardInstructions = [
 		"Workflow guard is active.",
 		"For small/direct tasks, proceed directly; workflow_decision is optional.",
-		"Before mutating files or running mutating shell commands on substantial work, call workflow_decision.",
-		"For substantial work, workflow_decision must select subagent mode and list using-superpowers plus at least one execution skill.",
-		"For substantial work, run a subagent before the first mutation unless the user explicitly asked for direct/no-subagent execution.",
+		"For substantial work, the harness preselects subagent mode unless the user explicitly asked for direct/no-subagent execution.",
+		"For substantial work, run a subagent before the first mutation.",
+		"Use workflow_decision only to explicitly declare or adjust workflow mode before mutations.",
 		"Use direct mode only for small tasks or explicit direct/no-subagent user requests.",
 	].join("\n");
 	return [
@@ -339,9 +369,10 @@ export default function workflowGuard(pi: ExtensionAPI) {
 	});
 
 	pi.on("before_agent_start", (event) => {
-		state.classification = classifyPromptForWorkflow(event.prompt);
-		state.decision = undefined;
-		state.subagentStarted = false;
+		const nextState = createWorkflowGuardStateForPrompt(event.prompt);
+		state.classification = nextState.classification;
+		state.decision = nextState.decision;
+		state.subagentStarted = nextState.subagentStarted;
 		return { systemPrompt: buildWorkflowSystemPrompt(event.systemPrompt, event.prompt) };
 	});
 
