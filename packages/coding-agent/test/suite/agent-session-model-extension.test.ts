@@ -239,6 +239,39 @@ describe("AgentSession model and extension characterization", () => {
 		).toBeDefined();
 	});
 
+	it("allows extension tool_result handlers to terminate after the tool batch", async () => {
+		const echoTool: AgentTool = {
+			name: "echo",
+			label: "Echo",
+			description: "Echo text back",
+			parameters: Type.Object({ text: Type.String() }),
+			execute: async (_toolCallId, params) => {
+				const text = typeof params === "object" && params !== null && "text" in params ? String(params.text) : "";
+				return { content: [{ type: "text", text }], details: { text } };
+			},
+		};
+		const harness = await createHarness({
+			tools: [echoTool],
+			extensionFactories: [
+				(pi) => {
+					pi.on("tool_result", async () => ({
+						terminate: true,
+					}));
+				},
+			],
+		});
+		harnesses.push(harness);
+		harness.setResponses([
+			fauxAssistantMessage([fauxToolCall("echo", { text: "launch async worker" })], { stopReason: "toolUse" }),
+			fauxAssistantMessage("unexpected follow-up"),
+		]);
+
+		await harness.session.prompt("hi");
+
+		expect(getAssistantTexts(harness)).not.toContain("unexpected follow-up");
+		expect(harness.getPendingResponseCount()).toBe(1);
+	});
+
 	it("allows extension context handlers to modify messages before the LLM call", async () => {
 		const harness = await createHarness({
 			extensionFactories: [

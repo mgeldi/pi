@@ -26,7 +26,6 @@ export type WorkflowGuardState = {
 	classification: WorkflowPromptClassification;
 	decision?: WorkflowDecision;
 	subagentStarted: boolean;
-	blockImmediateAsyncSubagentStatus?: boolean;
 	todoCreateCount: number;
 	todoPhases: Partial<Record<WorkflowTodoPhase, WorkflowTodoStatus>>;
 };
@@ -216,7 +215,6 @@ export function createWorkflowGuardStateForPrompt(prompt: string): WorkflowGuard
 		classification,
 		decision,
 		subagentStarted: false,
-		blockImmediateAsyncSubagentStatus: false,
 		todoCreateCount: 0,
 		todoPhases: {},
 	};
@@ -321,10 +319,6 @@ export function isSubagentExecution(call: ToolCallSummary): boolean {
 	return Boolean(call.input.agent || call.input.tasks || call.input.chain || call.input.chainName);
 }
 
-function isSubagentStatusCall(call: ToolCallSummary): boolean {
-	return SUBAGENT_TOOL_NAMES.has(call.toolName) && call.input.action === "status";
-}
-
 function collectSubagentNames(value: unknown, names: string[] = []): string[] {
 	if (typeof value !== "object" || value === null) return names;
 	if (Array.isArray(value)) {
@@ -365,16 +359,7 @@ function evaluateSubagentExecutionGate(state: WorkflowGuardState, call: ToolCall
 		block: true,
 		reason:
 			`Workflow guard blocked subagent execution: ${nameList} is a skill name, not the implementation agent. ` +
-			`Use the "worker" subagent with a skill override instead, e.g. { agent: "worker", skill: [${nameList}], task: "...", async: true }.`,
-	};
-}
-
-function evaluateSubagentStatusGate(state: WorkflowGuardState, call: ToolCallSummary): MutationGateResult {
-	if (!state.blockImmediateAsyncSubagentStatus || !isSubagentStatusCall(call)) return { block: false };
-	return {
-		block: true,
-		reason:
-			"Workflow guard blocked immediate async subagent polling: the async run is already visible in the tracking overlay. Continue independent parent work, stop and wait for the user, or inspect status later when there is a concrete reason.",
+			`Use the "worker" subagent with a skill override instead, e.g. { agent: "worker", skill: [${nameList}], task: "..." }.`,
 	};
 }
 
@@ -489,8 +474,6 @@ function evaluateCompletionPhaseGate(state: WorkflowGuardState, call: ToolCallSu
 
 export function evaluateToolCallGate(state: WorkflowGuardState, call: ToolCallSummary): MutationGateResult {
 	if (call.toolName === WORKFLOW_DECISION_TOOL) return { block: false };
-	const subagentStatusGate = evaluateSubagentStatusGate(state, call);
-	if (subagentStatusGate.block) return subagentStatusGate;
 	const todoCreateGate = evaluateTodoCreateGate(state, call);
 	if (todoCreateGate.block) return todoCreateGate;
 	if (TODO_TOOL_NAMES.has(call.toolName)) return { block: false };
@@ -545,6 +528,7 @@ function buildWorkflowSystemPrompt(systemPrompt: string, prompt: string): string
 		"Before source mutations on substantial work, update the execute todo to in_progress.",
 		"Before git commit or push on substantial work, complete the review and verify todos.",
 		"For substantial work, run an implementation subagent before the first mutation: use agent 'worker' or 'delegate'. Skills such as frontend-design belong in the subagent skill override, not in the agent field.",
+		"Use synchronous worker subagents for implementation handoffs when the parent must review or verify the result. Use async only for background work where the parent can continue independently.",
 		"Use workflow_decision only to explicitly declare or adjust workflow mode before mutations.",
 		"Use direct mode only for small tasks or explicit direct/no-subagent user requests.",
 	].join("\n");
@@ -577,7 +561,6 @@ export default function workflowGuard(pi: ExtensionAPI) {
 	const state: WorkflowGuardState = {
 		classification: classifyPromptForWorkflow(""),
 		subagentStarted: false,
-		blockImmediateAsyncSubagentStatus: false,
 		todoCreateCount: 0,
 		todoPhases: {},
 	};
@@ -593,6 +576,7 @@ export default function workflowGuard(pi: ExtensionAPI) {
 			"Declare using-superpowers plus at least one execution skill; frontend-design is valid for frontend/artifact/game work.",
 			"Before subagent execution or source mutations, create todo items with metadata.phase: investigate, plan, execute, review, verify.",
 			"Use agent 'worker' with skill overrides for implementation, e.g. agent=worker and skill=[frontend-design]; do not use a skill name as the subagent agent.",
+			"Prefer synchronous worker implementation handoffs. Use async only when the parent can do useful independent work.",
 			"Set the execute todo to in_progress before source mutations; complete review and verify todos before git commit or push.",
 		],
 		parameters: WorkflowDecisionParams,
@@ -624,7 +608,6 @@ export default function workflowGuard(pi: ExtensionAPI) {
 		state.classification = nextState.classification;
 		state.decision = nextState.decision;
 		state.subagentStarted = nextState.subagentStarted;
-		state.blockImmediateAsyncSubagentStatus = nextState.blockImmediateAsyncSubagentStatus;
 		state.todoCreateCount = nextState.todoCreateCount;
 		state.todoPhases = nextState.todoPhases;
 		return { systemPrompt: buildWorkflowSystemPrompt(event.systemPrompt, event.prompt) };
@@ -653,9 +636,18 @@ export default function workflowGuard(pi: ExtensionAPI) {
 		}
 		if (!event.isError && isWorkflowSubagentExecution(call)) {
 			state.subagentStarted = true;
-			state.blockImmediateAsyncSubagentStatus = call.input.async === true;
-		} else if (!event.isError && state.blockImmediateAsyncSubagentStatus && !isSubagentStatusCall(call)) {
-			state.blockImmediateAsyncSubagentStatus = false;
+			if (call.input.async === true) {
+				return {
+					content: [
+						...event.content,
+						{
+							type: "text",
+							text: "Async implementation worker launched. Parent turn is ending now; use the tracking overlay for progress instead of polling.",
+						},
+					],
+					terminate: true,
+				};
+			}
 		}
 	});
 }

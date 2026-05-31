@@ -782,6 +782,10 @@ export class ExtensionRunner {
 						currentEvent.isError = handlerResult.isError;
 						modified = true;
 					}
+					if (handlerResult.terminate !== undefined) {
+						currentEvent.terminate = handlerResult.terminate;
+						modified = true;
+					}
 				} catch (err) {
 					const message = err instanceof Error ? err.message : String(err);
 					const stack = err instanceof Error ? err.stack : undefined;
@@ -799,11 +803,15 @@ export class ExtensionRunner {
 			return undefined;
 		}
 
-		return {
+		const result: ToolResultEventResult = {
 			content: currentEvent.content,
 			details: currentEvent.details,
 			isError: currentEvent.isError,
 		};
+		if (currentEvent.terminate !== undefined) {
+			result.terminate = currentEvent.terminate;
+		}
+		return result;
 	}
 
 	async emitToolCall(event: ToolCallEvent): Promise<ToolCallEventResult | undefined> {

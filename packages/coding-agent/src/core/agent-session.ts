@@ -455,6 +455,7 @@ export class AgentSession {
 				content: result.content,
 				details: result.details,
 				isError,
+				terminate: result.terminate,
 			});
 
 			if (!hookResult) {
@@ -465,6 +466,7 @@ export class AgentSession {
 				content: hookResult.content,
 				details: hookResult.details,
 				isError: hookResult.isError ?? isError,
+				terminate: hookResult.terminate ?? result.terminate,
 			};
 		};
 	}

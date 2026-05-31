@@ -846,6 +846,7 @@ interface ToolResultEventBase {
 	input: Record<string, unknown>;
 	content: (TextContent | ImageContent)[];
 	isError: boolean;
+	terminate?: boolean;
 }
 
 export interface BashToolResultEvent extends ToolResultEventBase {
@@ -1017,6 +1018,8 @@ export interface ToolResultEventResult {
 	content?: (TextContent | ImageContent)[];
 	details?: unknown;
 	isError?: boolean;
+	/** Hint that the agent should stop after the current tool batch. */
+	terminate?: boolean;
 }
 
 export interface MessageEndEventResult {

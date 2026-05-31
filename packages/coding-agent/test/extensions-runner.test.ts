@@ -696,6 +696,37 @@ describe("ExtensionRunner", () => {
 				isError: true,
 			});
 		});
+
+		it("propagates terminate hints from tool_result handlers", async () => {
+			const extCode = `
+				export default function(pi) {
+					pi.on("tool_result", async () => {
+						return { terminate: true };
+					});
+				}
+			`;
+			fs.writeFileSync(path.join(extensionsDir, "tool-result-terminate.ts"), extCode);
+
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+
+			const chained = await runner.emitToolResult({
+				type: "tool_result",
+				toolName: "my_tool",
+				toolCallId: "call-terminate",
+				input: {},
+				content: [{ type: "text", text: "base" }],
+				details: { initial: true },
+				isError: false,
+			});
+
+			expect(chained).toEqual({
+				content: [{ type: "text", text: "base" }],
+				details: { initial: true },
+				isError: false,
+				terminate: true,
+			});
+		});
 	});
 
 	describe("provider registration", () => {

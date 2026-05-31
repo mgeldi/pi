@@ -398,17 +398,7 @@ test("detects only real subagent execution calls", () => {
 	assert.equal(isSubagentExecution({ toolName: "read", input: { path: "src/app.ts" } }), false);
 });
 
-test("blocks immediate async subagent status polling", () => {
-	const state = createWorkflowGuardStateForPrompt("Create a polished galactic colony browser game as a single HTML file.");
-	state.blockImmediateAsyncSubagentStatus = true;
-
-	const result = evaluateToolCallGate(state, { toolName: "subagent", input: { action: "status" } });
-
-	assert.equal(result.block, true);
-	assert.match(result.reason, /tracking overlay/);
-});
-
-test("allows subagent status when not immediately after async launch", () => {
+test("allows subagent status inspection", () => {
 	const state = createWorkflowGuardStateForPrompt("Create a polished galactic colony browser game as a single HTML file.");
 
 	const result = evaluateToolCallGate(state, { toolName: "subagent", input: { action: "status" } });

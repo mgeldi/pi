@@ -75,9 +75,14 @@ Subagent workflow model:
   passed through the subagent `skill` override, for example `agent: "worker"`
   with `skill: ["frontend-design"]`; skill names are not valid implementation
   agent names.
-- Immediately polling `subagent status` after an async launch is blocked. The
-  async run should be watched through the tracking overlay unless there is a
-  concrete reason to inspect status later.
+- Implementation handoffs should normally be synchronous: the parent waits for
+  the `worker` result, then performs review and verification. Async is for
+  read-only scouts, reviewers, validators, fanout, or true background work where
+  the parent can continue independently.
+- If an implementation `worker` is launched with `async: true` anyway,
+  `workflow-guard` marks the handoff as started and terminates the parent turn
+  after the tool result. Progress stays visible through the tracking overlay,
+  avoiding immediate `subagent status` polling loops.
 - Fresh-context defaults are set for `scout`, `researcher`, `context-builder`,
   `planner`, `reviewer`, and `delegate` to reduce parent context bloat.
 - `worker` and `oracle` stay forked by default because they often need the
