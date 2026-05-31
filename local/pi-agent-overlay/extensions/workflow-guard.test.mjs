@@ -154,6 +154,47 @@ test("only counts todo creates with descriptions", () => {
 	assert.equal(isTodoCreateCall({ toolName: "todo", input: { action: "list" } }), false);
 });
 
+test("accepts frontend-design as a substantial execution skill", () => {
+	const errors = validateWorkflowDecision({
+		mode: "subagent",
+		taskSize: "substantial",
+		skills: ["using-superpowers", "frontend-design"],
+		reason: "A polished browser game needs frontend execution.",
+	});
+
+	assert.deepEqual(errors, []);
+});
+
+test("blocks bare substantial todo creates that do not declare a phase", () => {
+	const state = createWorkflowGuardStateForPrompt("Create a polished galactic colony browser game as a single HTML file.");
+
+	const result = evaluateToolCallGate(state, {
+		toolName: "todo",
+		input: { action: "create", subject: "Implement Galactic Colony game" },
+	});
+
+	assert.equal(result.block, true);
+	assert.match(result.reason, /metadata\.phase/);
+	assert.match(result.reason, /investigate/);
+});
+
+test("allows valid substantial phase todo creates", () => {
+	const state = createWorkflowGuardStateForPrompt("Create a polished galactic colony browser game as a single HTML file.");
+
+	const result = evaluateToolCallGate(state, {
+		toolName: "todo",
+		input: {
+			action: "create",
+			subject: "Investigate game requirements",
+			description: "Inspect the requested game scope and define what facts must be gathered before implementation.",
+			activeForm: "investigating game requirements",
+			metadata: { phase: "investigate" },
+		},
+	});
+
+	assert.equal(result.block, false);
+});
+
 test("blocks source mutations until execute todo is in progress", () => {
 	const state = createWorkflowGuardStateForPrompt("Implement a new workflow extension with tests.");
 	addRequiredPhaseTodos(state, { execute: "pending" });

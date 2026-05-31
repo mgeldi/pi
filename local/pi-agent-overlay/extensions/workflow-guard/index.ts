@@ -48,9 +48,20 @@ const EXECUTION_SKILLS = new Set([
 	"brainstorming",
 	"dispatching-parallel-agents",
 	"executing-plans",
+	"frontend-design",
+	"build-web-apps:frontend-app-builder",
+	"java-clean-code",
+	"lsp-navigation",
+	"spring-boot",
+	"spring-boot-microservices",
+	"spring-boot-testing",
+	"spring-data-jpa",
+	"spring-security",
 	"subagent-driven-development",
 	"systematic-debugging",
 	"test-driven-development",
+	"vaadin",
+	"vaadin-testing",
 	"using-git-worktrees",
 	"verification-before-completion",
 	"writing-plans",
@@ -101,7 +112,7 @@ const WorkflowDecisionParams = {
 			type: "array",
 			items: { type: "string" },
 			description:
-				"Skills you have invoked or are applying, e.g. using-superpowers, brainstorming, subagent-driven-development, test-driven-development.",
+				"Skills you have invoked or are applying, e.g. using-superpowers, frontend-design, subagent-driven-development, test-driven-development.",
 		},
 		reason: {
 			type: "string",
@@ -379,6 +390,18 @@ function evaluateTodoGate(state: WorkflowGuardState): MutationGateResult {
 	};
 }
 
+function evaluateTodoCreateGate(state: WorkflowGuardState, call: ToolCallSummary): MutationGateResult {
+	if (!requiresSubstantialTodos(state) || !TODO_TOOL_NAMES.has(call.toolName) || call.input.action !== "create") {
+		return { block: false };
+	}
+	if (isTodoCreateCall(call)) return { block: false };
+	return {
+		block: true,
+		reason:
+			"Workflow guard blocked todo create: substantial work todos must include subject, description, activeForm, and metadata.phase using one of: investigate, plan, execute, review, verify.",
+	};
+}
+
 function evaluateExecutionPhaseGate(state: WorkflowGuardState, call: ToolCallSummary): MutationGateResult {
 	if (!requiresSubstantialTodos(state) || !isSourceMutationCall(call)) return { block: false };
 	if (state.todoPhases?.execute === "in_progress") return { block: false };
@@ -399,6 +422,8 @@ function evaluateCompletionPhaseGate(state: WorkflowGuardState, call: ToolCallSu
 
 export function evaluateToolCallGate(state: WorkflowGuardState, call: ToolCallSummary): MutationGateResult {
 	if (call.toolName === WORKFLOW_DECISION_TOOL) return { block: false };
+	const todoCreateGate = evaluateTodoCreateGate(state, call);
+	if (todoCreateGate.block) return todoCreateGate;
 	if (TODO_TOOL_NAMES.has(call.toolName)) return { block: false };
 	if (isSubagentExecution(call)) return evaluateTodoGate(state);
 	const todoGate = evaluateTodoGate(state);
@@ -491,6 +516,7 @@ export default function workflowGuard(pi: ExtensionAPI) {
 		promptSnippet: "Declare direct vs subagent workflow before mutating files.",
 		promptGuidelines: [
 			"For substantial work, the harness already preselects subagent mode unless the user explicitly requested direct/no-subagent execution.",
+			"Declare using-superpowers plus at least one execution skill; frontend-design is valid for frontend/artifact/game work.",
 			"Before subagent execution or source mutations, create todo items with metadata.phase: investigate, plan, execute, review, verify.",
 			"Set the execute todo to in_progress before source mutations; complete review and verify todos before git commit or push.",
 		],
