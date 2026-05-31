@@ -386,6 +386,101 @@ describe("agentLoop with AgentMessage", () => {
 		expect(resultText).not.toContain("HTML clean");
 	});
 
+	it("should block a streaming tool call before large arguments are generated", async () => {
+		const toolSchema = Type.Object({ path: Type.String(), content: Type.String() });
+		const executed: Array<{ path: string; content: string }> = [];
+		const tool: AgentTool<typeof toolSchema, undefined> = {
+			name: "write",
+			label: "Write",
+			description: "Write tool",
+			parameters: toolSchema,
+			async execute(_toolCallId, params) {
+				executed.push(params);
+				return {
+					content: [{ type: "text", text: `wrote ${params.path}` }],
+					details: undefined,
+				};
+			},
+		};
+
+		const context: AgentContext = {
+			systemPrompt: "",
+			messages: [],
+			tools: [tool],
+		};
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+			beforeToolCallPreview: async ({ toolCall }) => {
+				if (toolCall.name === "write") {
+					return { block: true, reason: "blocked before generating write content" };
+				}
+				return undefined;
+			},
+		};
+
+		let llmCalls = 0;
+		let lateContentGenerated = false;
+		let firstRequestSignal: AbortSignal | undefined;
+		const stream = agentLoop(
+			[createUserMessage("write a large file")],
+			context,
+			config,
+			undefined,
+			(_model, _ctx, options) => {
+				llmCalls++;
+				const mockStream = new MockAssistantStream();
+				if (llmCalls === 1) {
+					firstRequestSignal = options?.signal;
+					queueMicrotask(() => {
+						const start = createAssistantMessage([], "toolUse");
+						mockStream.push({ type: "start", partial: start });
+						const partialToolCall = createAssistantMessage(
+							[{ type: "toolCall", id: "tool-1", name: "write", arguments: {} }],
+							"toolUse",
+						);
+						mockStream.push({ type: "toolcall_start", contentIndex: 0, partial: partialToolCall });
+						setTimeout(() => {
+							if (options?.signal?.aborted) return;
+							lateContentGenerated = true;
+							mockStream.push({
+								type: "toolcall_delta",
+								contentIndex: 0,
+								delta: JSON.stringify({ path: "large.html", content: "x".repeat(10_000) }),
+								partial: partialToolCall,
+							});
+						}, 0);
+					});
+				} else {
+					queueMicrotask(() => {
+						mockStream.push({
+							type: "done",
+							reason: "stop",
+							message: createAssistantMessage([{ type: "text", text: "handled guard feedback" }]),
+						});
+					});
+				}
+				return mockStream;
+			},
+		);
+
+		for await (const _event of stream) {
+			// consume
+		}
+		await new Promise((resolve) => setTimeout(resolve, 10));
+
+		const messages = await stream.result();
+		const toolResult = messages.find((message) => message.role === "toolResult");
+		const resultText = toolResult?.content.map((content) => (content.type === "text" ? content.text : "")).join("\n");
+
+		expect(executed).toEqual([]);
+		expect(firstRequestSignal?.aborted).toBe(true);
+		expect(lateContentGenerated).toBe(false);
+		expect(resultText).toContain("blocked before generating write content");
+		expect(messages.at(-1)?.role).toBe("assistant");
+		expect(llmCalls).toBe(2);
+	});
+
 	it("should not execute length-truncated non-file-continuation tool calls", async () => {
 		const toolSchema = Type.Object({ command: Type.String() });
 		const executed: string[] = [];

@@ -20,6 +20,7 @@ import type {
 	AgentState,
 	AgentTool,
 	BeforeToolCallContext,
+	BeforeToolCallPreviewContext,
 	BeforeToolCallResult,
 	QueueMode,
 	StreamFn,
@@ -102,6 +103,10 @@ export interface AgentOptions {
 	onPayload?: SimpleStreamOptions["onPayload"];
 	onResponse?: SimpleStreamOptions["onResponse"];
 	beforeToolCall?: (context: BeforeToolCallContext, signal?: AbortSignal) => Promise<BeforeToolCallResult | undefined>;
+	beforeToolCallPreview?: (
+		context: BeforeToolCallPreviewContext,
+		signal?: AbortSignal,
+	) => Promise<BeforeToolCallResult | undefined>;
 	afterToolCall?: (context: AfterToolCallContext, signal?: AbortSignal) => Promise<AfterToolCallResult | undefined>;
 	prepareNextTurn?: (
 		signal?: AbortSignal,
@@ -179,6 +184,10 @@ export class Agent {
 		context: BeforeToolCallContext,
 		signal?: AbortSignal,
 	) => Promise<BeforeToolCallResult | undefined>;
+	public beforeToolCallPreview?: (
+		context: BeforeToolCallPreviewContext,
+		signal?: AbortSignal,
+	) => Promise<BeforeToolCallResult | undefined>;
 	public afterToolCall?: (
 		context: AfterToolCallContext,
 		signal?: AbortSignal,
@@ -207,6 +216,7 @@ export class Agent {
 		this.onPayload = options.onPayload;
 		this.onResponse = options.onResponse;
 		this.beforeToolCall = options.beforeToolCall;
+		this.beforeToolCallPreview = options.beforeToolCallPreview;
 		this.afterToolCall = options.afterToolCall;
 		this.prepareNextTurn = options.prepareNextTurn;
 		this.steeringQueue = new PendingMessageQueue(options.steeringMode ?? "one-at-a-time");
@@ -432,6 +442,7 @@ export class Agent {
 			maxRetryDelayMs: this.maxRetryDelayMs,
 			toolExecution: this.toolExecution,
 			beforeToolCall: this.beforeToolCall,
+			beforeToolCallPreview: this.beforeToolCallPreview,
 			afterToolCall: this.afterToolCall,
 			prepareNextTurn: this.prepareNextTurn ? async () => await this.prepareNextTurn?.(this.signal) : undefined,
 			convertToLlm: this.convertToLlm,

@@ -92,6 +92,18 @@ export interface BeforeToolCallContext {
 	context: AgentContext;
 }
 
+/** Context passed to `beforeToolCallPreview` while a tool call is still streaming. */
+export interface BeforeToolCallPreviewContext {
+	/** The partial assistant message currently being streamed. */
+	assistantMessage: AssistantMessage;
+	/** The partial tool call block from `assistantMessage.content`. Arguments may be incomplete. */
+	toolCall: AgentToolCall;
+	/** Stream protocol event that exposed this preview. */
+	eventType: "toolcall_start";
+	/** Current agent context at the time the tool call preview is observed. */
+	context: AgentContext;
+}
+
 /** Context passed to `afterToolCall`. */
 export interface AfterToolCallContext {
 	/** The assistant message that requested the tool call. */
@@ -260,6 +272,17 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 	 * The hook receives the agent abort signal and is responsible for honoring it.
 	 */
 	beforeToolCall?: (context: BeforeToolCallContext, signal?: AbortSignal) => Promise<BeforeToolCallResult | undefined>;
+
+	/**
+	 * Called as soon as a tool call is visible in the assistant stream, before full arguments are generated.
+	 *
+	 * Return `{ block: true }` to abort the provider stream and synthesize a blocked tool result. This is intended
+	 * for guards that can decide from the tool name alone, e.g. blocking write/edit before a huge content argument.
+	 */
+	beforeToolCallPreview?: (
+		context: BeforeToolCallPreviewContext,
+		signal?: AbortSignal,
+	) => Promise<BeforeToolCallResult | undefined>;
 
 	/**
 	 * Called after a tool finishes executing, before `tool_execution_end` and tool-result message events are emitted.

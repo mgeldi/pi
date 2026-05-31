@@ -561,6 +561,13 @@ export default function workflowGuard(pi: ExtensionAPI) {
 		return { block: true, reason: gate.reason };
 	});
 
+	pi.on("tool_call_preview", (event) => {
+		const call = { toolName: event.toolName, input: event.input as JsonRecord };
+		const gate = evaluateToolCallGate(state, call);
+		if (!gate.block) return;
+		return { block: true, reason: gate.reason };
+	});
+
 	pi.on("tool_result", (event) => {
 		const call = { toolName: event.toolName, input: event.input as JsonRecord };
 		if (!event.isError && TODO_TOOL_NAMES.has(event.toolName)) {

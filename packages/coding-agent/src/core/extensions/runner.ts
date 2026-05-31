@@ -51,6 +51,8 @@ import type {
 	SessionShutdownEvent,
 	ToolCallEvent,
 	ToolCallEventResult,
+	ToolCallPreviewEvent,
+	ToolCallPreviewEventResult,
 	ToolResultEvent,
 	ToolResultEventResult,
 	UserBashEvent,
@@ -115,6 +117,7 @@ interface BeforeAgentStartCombinedResult {
 type RunnerEmitEvent = Exclude<
 	ExtensionEvent,
 	| ToolCallEvent
+	| ToolCallPreviewEvent
 	| ToolResultEvent
 	| UserBashEvent
 	| ContextEvent
@@ -816,6 +819,29 @@ export class ExtensionRunner {
 
 				if (handlerResult) {
 					result = handlerResult as ToolCallEventResult;
+					if (result.block) {
+						return result;
+					}
+				}
+			}
+		}
+
+		return result;
+	}
+
+	async emitToolCallPreview(event: ToolCallPreviewEvent): Promise<ToolCallPreviewEventResult | undefined> {
+		const ctx = this.createContext();
+		let result: ToolCallPreviewEventResult | undefined;
+
+		for (const ext of this.extensions) {
+			const handlers = ext.handlers.get("tool_call_preview");
+			if (!handlers || handlers.length === 0) continue;
+
+			for (const handler of handlers) {
+				const handlerResult = await handler(event, ctx);
+
+				if (handlerResult) {
+					result = handlerResult as ToolCallPreviewEventResult;
 					if (result.block) {
 						return result;
 					}

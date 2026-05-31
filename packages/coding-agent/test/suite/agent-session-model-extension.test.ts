@@ -135,6 +135,64 @@ describe("AgentSession model and extension characterization", () => {
 		).toBeDefined();
 	});
 
+	it("allows extension tool_call_preview handlers to block streaming tool calls", async () => {
+		let previewCalls = 0;
+		let fullToolCalls = 0;
+		const writeTool: AgentTool = {
+			name: "write",
+			label: "Write",
+			description: "Write content",
+			parameters: Type.Object({ path: Type.String(), content: Type.String() }),
+			execute: async () => {
+				throw new Error("tool should have been blocked before full arguments streamed");
+			},
+		};
+		const harness = await createHarness({
+			tools: [writeTool],
+			extensionFactories: [
+				(pi) => {
+					pi.on("tool_call_preview", async (event) => {
+						previewCalls++;
+						if (event.toolName === "write") {
+							return { block: true, reason: "Blocked before content stream" };
+						}
+						return undefined;
+					});
+					pi.on("tool_call", async () => {
+						fullToolCalls++;
+						return undefined;
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		harness.setResponses([
+			fauxAssistantMessage([fauxToolCall("write", { path: "large.html", content: "x".repeat(10_000) })], {
+				stopReason: "toolUse",
+			}),
+			(context) => {
+				const toolResult = context.messages.find((message) => message.role === "toolResult");
+				const errorText =
+					toolResult?.role === "toolResult"
+						? toolResult.content
+								.filter((part): part is { type: "text"; text: string } => part.type === "text")
+								.map((part) => part.text)
+								.join("\n")
+						: "";
+				return fauxAssistantMessage(errorText);
+			},
+		]);
+
+		await harness.session.prompt("write a large file");
+
+		expect(previewCalls).toBe(1);
+		expect(fullToolCalls).toBe(0);
+		expect(getAssistantTexts(harness)).toContain("Blocked before content stream");
+		expect(
+			harness.session.messages.find((message) => message.role === "toolResult" && message.isError),
+		).toBeDefined();
+	});
+
 	it("allows extension tool_result handlers to modify tool results", async () => {
 		const echoTool: AgentTool = {
 			name: "echo",

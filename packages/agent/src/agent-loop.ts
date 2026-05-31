@@ -5,6 +5,7 @@
 
 import {
 	type AssistantMessage,
+	type AssistantMessageEvent,
 	type Context,
 	EventStream,
 	streamSimple,
@@ -190,7 +191,8 @@ async function runLoop(
 			}
 
 			// Stream assistant response
-			const message = await streamAssistantResponse(currentContext, config, signal, emit, streamFn);
+			const streamedResponse = await streamAssistantResponse(currentContext, config, signal, emit, streamFn);
+			const message = streamedResponse.message;
 			newMessages.push(message);
 
 			if (message.stopReason === "error" || message.stopReason === "aborted") {
@@ -205,7 +207,14 @@ async function runLoop(
 			const toolResults: ToolResultMessage[] = [];
 			hasMoreToolCalls = false;
 			if (toolCalls.length > 0) {
-				const executedToolBatch = await executeToolCalls(currentContext, message, config, signal, emit);
+				const executedToolBatch = await executeToolCalls(
+					currentContext,
+					message,
+					config,
+					signal,
+					emit,
+					streamedResponse.earlyBlockedToolCalls,
+				);
 				toolResults.push(...executedToolBatch.messages);
 				hasMoreToolCalls = !executedToolBatch.terminate;
 
@@ -278,7 +287,7 @@ async function streamAssistantResponse(
 	signal: AbortSignal | undefined,
 	emit: AgentEventSink,
 	streamFn?: StreamFn,
-): Promise<AssistantMessage> {
+): Promise<StreamedAssistantResponse> {
 	// Apply context transform if configured (AgentMessage[] → AgentMessage[])
 	let messages = context.messages;
 	if (config.transformContext) {
@@ -296,6 +305,7 @@ async function streamAssistantResponse(
 	};
 
 	const streamFunction = streamFn || streamSimple;
+	const streamAbortController = createLinkedAbortController(signal);
 
 	// Resolve API key (important for expiring tokens)
 	const resolvedApiKey =
@@ -304,56 +314,79 @@ async function streamAssistantResponse(
 	const response = await streamFunction(config.model, llmContext, {
 		...config,
 		apiKey: resolvedApiKey,
-		signal,
+		signal: streamAbortController.signal,
 	});
 
 	let partialMessage: AssistantMessage | null = null;
 	let addedPartial = false;
 
-	for await (const event of response) {
-		switch (event.type) {
-			case "start":
-				partialMessage = event.partial;
-				context.messages.push(partialMessage);
-				addedPartial = true;
-				await emit({ type: "message_start", message: { ...partialMessage } });
-				break;
-
-			case "text_start":
-			case "text_delta":
-			case "text_end":
-			case "thinking_start":
-			case "thinking_delta":
-			case "thinking_end":
-			case "toolcall_start":
-			case "toolcall_delta":
-			case "toolcall_end":
-				if (partialMessage) {
+	try {
+		for await (const event of response) {
+			switch (event.type) {
+				case "start":
 					partialMessage = event.partial;
-					context.messages[context.messages.length - 1] = partialMessage;
-					await emit({
-						type: "message_update",
-						assistantMessageEvent: event,
-						message: { ...partialMessage },
-					});
-				}
-				break;
+					context.messages.push(partialMessage);
+					addedPartial = true;
+					await emit({ type: "message_start", message: { ...partialMessage } });
+					break;
 
-			case "done":
-			case "error": {
-				const finalMessage = await response.result();
-				if (addedPartial) {
-					context.messages[context.messages.length - 1] = finalMessage;
-				} else {
-					context.messages.push(finalMessage);
+				case "text_start":
+				case "text_delta":
+				case "text_end":
+				case "thinking_start":
+				case "thinking_delta":
+				case "thinking_end":
+				case "toolcall_start":
+				case "toolcall_delta":
+				case "toolcall_end":
+					if (partialMessage) {
+						partialMessage = event.partial;
+						context.messages[context.messages.length - 1] = partialMessage;
+						await emit({
+							type: "message_update",
+							assistantMessageEvent: event,
+							message: { ...partialMessage },
+						});
+
+						if (event.type === "toolcall_start") {
+							const blockedToolCall = await maybeBlockStreamingToolCall(
+								context,
+								config,
+								streamAbortController.signal,
+								event,
+							);
+							if (blockedToolCall) {
+								streamAbortController.abort(blockedToolCall.reason);
+								const finalMessage = createEarlyBlockedAssistantMessage(partialMessage);
+								context.messages[context.messages.length - 1] = finalMessage;
+								await emit({ type: "message_end", message: finalMessage });
+								return {
+									message: finalMessage,
+									earlyBlockedToolCalls: new Map([[blockedToolCall.toolCall.id, blockedToolCall.reason]]),
+								};
+							}
+						}
+					}
+					break;
+
+				case "done":
+				case "error": {
+					const finalMessage = await response.result();
+					if (addedPartial) {
+						context.messages[context.messages.length - 1] = finalMessage;
+					} else {
+						context.messages.push(finalMessage);
+					}
+					if (!addedPartial) {
+						await emit({ type: "message_start", message: { ...finalMessage } });
+					}
+					await emit({ type: "message_end", message: finalMessage });
+					return { message: finalMessage, earlyBlockedToolCalls: new Map() };
 				}
-				if (!addedPartial) {
-					await emit({ type: "message_start", message: { ...finalMessage } });
-				}
-				await emit({ type: "message_end", message: finalMessage });
-				return finalMessage;
 			}
 		}
+	} finally {
+		streamAbortController.cleanup();
 	}
 
 	const finalMessage = await response.result();
@@ -364,7 +397,63 @@ async function streamAssistantResponse(
 		await emit({ type: "message_start", message: { ...finalMessage } });
 	}
 	await emit({ type: "message_end", message: finalMessage });
-	return finalMessage;
+	return { message: finalMessage, earlyBlockedToolCalls: new Map() };
+}
+
+type StreamedAssistantResponse = {
+	message: AssistantMessage;
+	earlyBlockedToolCalls: Map<string, string>;
+};
+
+type LinkedAbortController = AbortController & { cleanup: () => void };
+
+function createLinkedAbortController(upstreamSignal: AbortSignal | undefined): LinkedAbortController {
+	const controller = new AbortController() as LinkedAbortController;
+	controller.cleanup = () => {};
+	if (!upstreamSignal) return controller;
+	if (upstreamSignal.aborted) {
+		controller.abort(upstreamSignal.reason);
+		return controller;
+	}
+	const abort = () => controller.abort(upstreamSignal.reason);
+	upstreamSignal.addEventListener("abort", abort, { once: true });
+	controller.cleanup = () => upstreamSignal.removeEventListener("abort", abort);
+	return controller;
+}
+
+function createEarlyBlockedAssistantMessage(partialMessage: AssistantMessage): AssistantMessage {
+	return {
+		...partialMessage,
+		content: partialMessage.content.slice(),
+		stopReason: "toolUse",
+		timestamp: Date.now(),
+	};
+}
+
+async function maybeBlockStreamingToolCall(
+	context: AgentContext,
+	config: AgentLoopConfig,
+	signal: AbortSignal | undefined,
+	event: Extract<AssistantMessageEvent, { type: "toolcall_start" }>,
+): Promise<{ toolCall: AgentToolCall; reason: string } | undefined> {
+	if (!config.beforeToolCallPreview || signal?.aborted) return undefined;
+	const toolCall = event.partial.content[event.contentIndex];
+	if (!toolCall || toolCall.type !== "toolCall") return undefined;
+
+	const result = await config.beforeToolCallPreview(
+		{
+			assistantMessage: event.partial,
+			toolCall,
+			eventType: event.type,
+			context,
+		},
+		signal,
+	);
+	if (!result?.block) return undefined;
+	return {
+		toolCall,
+		reason: result.reason || "Tool call was blocked before arguments finished streaming",
+	};
 }
 
 /**
@@ -376,15 +465,32 @@ async function executeToolCalls(
 	config: AgentLoopConfig,
 	signal: AbortSignal | undefined,
 	emit: AgentEventSink,
+	earlyBlockedToolCalls: Map<string, string>,
 ): Promise<ExecutedToolCallBatch> {
 	const toolCalls = assistantMessage.content.filter((c) => c.type === "toolCall");
 	const hasSequentialToolCall = toolCalls.some(
 		(tc) => currentContext.tools?.find((t) => t.name === tc.name)?.executionMode === "sequential",
 	);
 	if (config.toolExecution === "sequential" || hasSequentialToolCall) {
-		return executeToolCallsSequential(currentContext, assistantMessage, toolCalls, config, signal, emit);
+		return executeToolCallsSequential(
+			currentContext,
+			assistantMessage,
+			toolCalls,
+			config,
+			signal,
+			emit,
+			earlyBlockedToolCalls,
+		);
 	}
-	return executeToolCallsParallel(currentContext, assistantMessage, toolCalls, config, signal, emit);
+	return executeToolCallsParallel(
+		currentContext,
+		assistantMessage,
+		toolCalls,
+		config,
+		signal,
+		emit,
+		earlyBlockedToolCalls,
+	);
 }
 
 type ExecutedToolCallBatch = {
@@ -399,6 +505,7 @@ async function executeToolCallsSequential(
 	config: AgentLoopConfig,
 	signal: AbortSignal | undefined,
 	emit: AgentEventSink,
+	earlyBlockedToolCalls: Map<string, string>,
 ): Promise<ExecutedToolCallBatch> {
 	const finalizedCalls: FinalizedToolCallOutcome[] = [];
 	const messages: ToolResultMessage[] = [];
@@ -411,7 +518,14 @@ async function executeToolCallsSequential(
 			args: toolCall.arguments,
 		});
 
-		const preparation = await prepareToolCall(currentContext, assistantMessage, toolCall, config, signal);
+		const preparation = await prepareToolCall(
+			currentContext,
+			assistantMessage,
+			toolCall,
+			config,
+			signal,
+			earlyBlockedToolCalls,
+		);
 		let finalized: FinalizedToolCallOutcome;
 		if (preparation.kind === "immediate") {
 			finalized = {
@@ -455,6 +569,7 @@ async function executeToolCallsParallel(
 	config: AgentLoopConfig,
 	signal: AbortSignal | undefined,
 	emit: AgentEventSink,
+	earlyBlockedToolCalls: Map<string, string>,
 ): Promise<ExecutedToolCallBatch> {
 	const finalizedCalls: FinalizedToolCallEntry[] = [];
 
@@ -466,7 +581,14 @@ async function executeToolCallsParallel(
 			args: toolCall.arguments,
 		});
 
-		const preparation = await prepareToolCall(currentContext, assistantMessage, toolCall, config, signal);
+		const preparation = await prepareToolCall(
+			currentContext,
+			assistantMessage,
+			toolCall,
+			config,
+			signal,
+			earlyBlockedToolCalls,
+		);
 		if (preparation.kind === "immediate") {
 			const finalized = {
 				toolCall,
@@ -576,7 +698,17 @@ async function prepareToolCall(
 	toolCall: AgentToolCall,
 	config: AgentLoopConfig,
 	signal: AbortSignal | undefined,
+	earlyBlockedToolCalls: Map<string, string>,
 ): Promise<PreparedToolCall | ImmediateToolCallOutcome> {
+	const earlyBlockReason = earlyBlockedToolCalls.get(toolCall.id);
+	if (earlyBlockReason) {
+		return {
+			kind: "immediate",
+			result: createErrorToolResult(earlyBlockReason),
+			isError: true,
+		};
+	}
+
 	const tool = currentContext.tools?.find((t) => t.name === toolCall.name);
 	if (!tool) {
 		return {

@@ -118,6 +118,8 @@ export type {
 	TerminalInputHandler,
 	ToolCallEvent,
 	ToolCallEventResult,
+	ToolCallPreviewEvent,
+	ToolCallPreviewEventResult,
 	ToolDefinition,
 	ToolExecutionMode,
 	ToolInfo,

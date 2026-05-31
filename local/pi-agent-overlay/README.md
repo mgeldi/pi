@@ -54,6 +54,9 @@ Subagent workflow model:
   source-mutating bash commands until the `execute` todo is `in_progress`.
   It also blocks `git commit` and `git push` until `review` and `verify` are
   completed.
+- The gate also listens to streaming tool-call previews, so `edit`, `write`,
+  and `append` can be rejected as soon as the tool name appears, before a model
+  spends a long response generating huge file contents that will be denied.
 - Explicit single-file artifact wording is treated as an artifact constraint,
   not as an automatic small/direct escape hatch. Polished apps, games, websites,
   dashboards, and interactive tools remain substantial even when delivered as
@@ -164,6 +167,7 @@ From the repository root:
 ```bash
 node --experimental-strip-types local/pi-agent-overlay/extensions/hermes-brain-provider.test.mjs
 node --experimental-strip-types --check local/pi-agent-overlay/extensions/hermes-brain-provider/index.ts
+node --experimental-strip-types local/pi-agent-overlay/extensions/workflow-guard.test.mjs
 node scripts/context-mode-pi-bridge-smoke.test.mjs
 ```
 

@@ -67,6 +67,8 @@ export {
 	type SessionTreeEvent,
 	type ToolCallEvent,
 	type ToolCallEventResult,
+	type ToolCallPreviewEvent,
+	type ToolCallPreviewEventResult,
 	type ToolDefinition,
 	type ToolRenderResultOptions,
 	type ToolResultEvent,

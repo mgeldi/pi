@@ -105,6 +105,18 @@ test("preselects subagent workflow for substantial prompts", () => {
 	assert.match(result.reason, /Run a subagent/);
 });
 
+test("blocks streaming write previews before content arguments exist", () => {
+	const state = createWorkflowGuardStateForPrompt(
+		"Create a polished galactic colony browser game as a single HTML file in galactic-colony.html.",
+	);
+
+	const result = evaluateToolCallGate(state, { toolName: "write", input: {} });
+
+	assert.equal(result.block, true);
+	assert.match(result.reason, /metadata\.phase/);
+	assert.match(result.reason, /investigate/);
+});
+
 test("blocks substantial subagent execution until required phase todos are created", () => {
 	const state = createWorkflowGuardStateForPrompt("Implement a new workflow extension with tests.");
 

@@ -134,6 +134,8 @@ export type {
 	// Events - Tool
 	ToolCallEvent,
 	ToolCallEventResult,
+	ToolCallPreviewEvent,
+	ToolCallPreviewEventResult,
 	// Tools
 	ToolDefinition,
 	// Events - Tool Execution

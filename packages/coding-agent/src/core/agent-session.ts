@@ -398,6 +398,28 @@ export class AgentSession {
 	 * happens here instead of in wrappers.
 	 */
 	private _installAgentToolHooks(): void {
+		this.agent.beforeToolCallPreview = async ({ toolCall, eventType }) => {
+			const runner = this._extensionRunner;
+			if (!runner.hasHandlers("tool_call_preview")) {
+				return undefined;
+			}
+
+			try {
+				return await runner.emitToolCallPreview({
+					type: "tool_call_preview",
+					toolName: toolCall.name,
+					toolCallId: toolCall.id,
+					input: toolCall.arguments as Record<string, unknown>,
+					streamEvent: eventType,
+				});
+			} catch (err) {
+				if (err instanceof Error) {
+					throw err;
+				}
+				throw new Error(`Extension failed, blocking streaming tool call: ${String(err)}`);
+			}
+		};
+
 		this.agent.beforeToolCall = async ({ toolCall, args }) => {
 			const runner = this._extensionRunner;
 			if (!runner.hasHandlers("tool_call")) {

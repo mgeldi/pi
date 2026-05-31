@@ -775,6 +775,15 @@ interface ToolCallEventBase {
 	toolCallId: string;
 }
 
+export interface ToolCallPreviewEvent {
+	type: "tool_call_preview";
+	toolCallId: string;
+	toolName: string;
+	/** Partial arguments visible while the tool call is still streaming. Usually empty at toolcall_start. */
+	input: Record<string, unknown>;
+	streamEvent: "toolcall_start";
+}
+
 export interface BashToolCallEvent extends ToolCallEventBase {
 	toolName: "bash";
 	input: BashToolInput;
@@ -970,6 +979,7 @@ export type ExtensionEvent =
 	| ThinkingLevelSelectEvent
 	| UserBashEvent
 	| InputEvent
+	| ToolCallPreviewEvent
 	| ToolCallEvent
 	| ToolResultEvent;
 
@@ -985,6 +995,12 @@ export type BeforeProviderRequestEventResult = unknown;
 
 export interface ToolCallEventResult {
 	/** Block tool execution. To modify arguments, mutate `event.input` in place instead. */
+	block?: boolean;
+	reason?: string;
+}
+
+export interface ToolCallPreviewEventResult {
+	/** Block the streaming tool call before full arguments are generated. */
 	block?: boolean;
 	reason?: string;
 }
@@ -1122,6 +1138,7 @@ export interface ExtensionAPI {
 	on(event: "tool_execution_end", handler: ExtensionHandler<ToolExecutionEndEvent>): void;
 	on(event: "model_select", handler: ExtensionHandler<ModelSelectEvent>): void;
 	on(event: "thinking_level_select", handler: ExtensionHandler<ThinkingLevelSelectEvent>): void;
+	on(event: "tool_call_preview", handler: ExtensionHandler<ToolCallPreviewEvent, ToolCallPreviewEventResult>): void;
 	on(event: "tool_call", handler: ExtensionHandler<ToolCallEvent, ToolCallEventResult>): void;
 	on(event: "tool_result", handler: ExtensionHandler<ToolResultEvent, ToolResultEventResult>): void;
 	on(event: "user_bash", handler: ExtensionHandler<UserBashEvent, UserBashEventResult>): void;
