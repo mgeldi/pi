@@ -47,8 +47,12 @@ Subagent workflow model:
 
 - The main Pi session is the persistent supervisor. It owns user communication,
   decisions, accepted scope, final synthesis, and completion claims.
-- `workflow-guard` adds a structural gate: before `edit`, `write`, `append`, or
-  obvious mutating bash commands, the agent must call `workflow_decision`.
+- `workflow-guard` adds a structural gate for substantial work: before `edit`,
+  `write`, `append`, or obvious mutating bash commands, the agent must call
+  `workflow_decision`.
+- Explicit single-file artifact tasks, such as a standalone HTML game, are
+  treated as small/direct so the agent does not spend a full generation on a
+  write that is then blocked.
 - For substantial tasks, `workflow_decision` must select `subagent`, declare
   `using-superpowers` plus an execution skill such as
   `subagent-driven-development`, and run a subagent before the first mutation.

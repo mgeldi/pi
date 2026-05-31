@@ -107,14 +107,21 @@ function hasExplicitDirectRequest(text: string): boolean {
 	return /\b(?:ohne\s+subagents?|no\s+subagents?|without\s+subagents?|mach\s+direkt|do\s+directly|direkt\s+machen|small\/direct|direct\s+mode)\b/i.test(text);
 }
 
+function hasSingleFileArtifactRequest(text: string): boolean {
+	return /\b(?:single[-\s]?file|one[-\s]?file|in\s+(?:a\s+)?single\s+file|single\s+html\s+file|one\s+html\s+file|eine\s+(?:einzelne\s+)?(?:datei|html[-\s]?datei)|nur\s+eine\s+datei)\b/i.test(
+		text,
+	);
+}
+
 function hasSmallTaskMarker(text: string): boolean {
 	return /\b(?:typo|tippfehler|one[-\s]?line|einzeil|klein(?:e|er|es)?|tiny|quick|kurz|nur\s+(?:eine|1)\s+(?:zeile|line))\b/i.test(text);
 }
 
 export function classifyPromptForWorkflow(prompt: string): WorkflowPromptClassification {
 	const text = normalizeText(prompt);
-	const explicitDirect = hasExplicitDirectRequest(prompt);
-	const smallMarker = hasSmallTaskMarker(prompt);
+	const singleFileArtifact = hasSingleFileArtifactRequest(prompt);
+	const explicitDirect = hasExplicitDirectRequest(prompt) || singleFileArtifact;
+	const smallMarker = hasSmallTaskMarker(prompt) || singleFileArtifact;
 	const substantialMarker = /\b(?:implement|implementiere|build|baue|feature|bugfix|fix|refactor|refaktor|rewrite|migration|upgrade|workflow|harness|extension|architecture|architektur|tests?|tdd|review|substantial|umfangreich|größer|komplex|multi[-\s]?file|mehrere\s+dateien)\b/i.test(prompt);
 	const longPrompt = text.length > 180;
 
@@ -174,6 +181,9 @@ export function evaluateMutationGate(state: WorkflowGuardState, call: ToolCallSu
 	if (!isMutatingToolCall(call)) return { block: false };
 
 	if (!state.decision) {
+		if (state.classification.taskSize === "small") {
+			return { block: false };
+		}
 		return {
 			block: true,
 			reason:
@@ -246,7 +256,8 @@ function buildWorkflowSystemPrompt(systemPrompt: string, prompt: string): string
 	const usingSuperpowers = buildSkillBlock(systemPrompt, "using-superpowers");
 	const guardInstructions = [
 		"Workflow guard is active.",
-		"Before mutating files or running mutating shell commands, call workflow_decision.",
+		"For small/direct tasks, proceed directly; workflow_decision is optional.",
+		"Before mutating files or running mutating shell commands on substantial work, call workflow_decision.",
 		"For substantial work, workflow_decision must select subagent mode and list using-superpowers plus at least one execution skill.",
 		"For substantial work, run a subagent before the first mutation unless the user explicitly asked for direct/no-subagent execution.",
 		"Use direct mode only for small tasks or explicit direct/no-subagent user requests.",
@@ -288,7 +299,7 @@ export default function workflowGuard(pi: ExtensionAPI) {
 			"Declare the workflow before source mutations. Use subagent mode for substantial tasks unless the user explicitly requested direct/no-subagent execution.",
 		promptSnippet: "Declare direct vs subagent workflow before mutating files.",
 		promptGuidelines: [
-			"Call workflow_decision before edit/write/append or mutating bash.",
+			"Call workflow_decision before edit/write/append or mutating bash for substantial work.",
 			"For substantial work, list using-superpowers and a relevant execution skill, then run a subagent before mutating files.",
 		],
 		parameters: WorkflowDecisionParams,

@@ -17,6 +17,15 @@ test("classifies substantial implementation prompts", () => {
 	assert.equal(result.explicitDirect, false);
 });
 
+test("classifies explicit single-file artifact prompts as small", () => {
+	const result = classifyPromptForWorkflow(
+		"Create a polished galactic colony browser game as a single HTML file in galactic-colony.html.",
+	);
+
+	assert.equal(result.taskSize, "small");
+	assert.equal(result.explicitDirect, true);
+});
+
 test("detects explicit direct escape hatch", () => {
 	const result = classifyPromptForWorkflow("mach direkt, ohne subagents: ändere diese eine README-Zeile");
 
@@ -44,6 +53,19 @@ test("gates source mutations without workflow decision", () => {
 
 test("treats append as a source mutation", () => {
 	assert.equal(isMutatingToolCall({ toolName: "append", input: { path: "src/app.ts", content: "x" } }), true);
+});
+
+test("allows small direct tasks without an explicit workflow decision", () => {
+	const result = evaluateMutationGate(
+		{
+			classification: classifyPromptForWorkflow("Create a single HTML file game in galactic-colony.html."),
+			decision: undefined,
+			subagentStarted: false,
+		},
+		{ toolName: "write", input: { path: "galactic-colony.html", content: "<!doctype html>" } },
+	);
+
+	assert.equal(result.block, false);
 });
 
 test("blocks substantial direct mode unless the user explicitly asked for direct work", () => {
